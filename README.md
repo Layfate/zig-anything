@@ -41,17 +41,50 @@ case 22: different value
 
 ## Contents
 
+- [Benchmarks](#benchmarks)
 - [Install](#install)
 - [Quick start](#quick-start)
 - [Commands](#commands)
 - [How it works](#how-it-works)
 - [Writing a port](#writing-a-port)
-- [Benchmarks](#benchmarks)
 - [Configuration](#configuration)
 - [MCP server](#mcp-server)
 - [Scope and limitations](#scope-and-limitations)
 - [Building from source](#building-from-source)
 - [Contributing](#contributing) · [Changelog](CHANGELOG.md) · [License](#license)
+
+## Benchmarks
+
+<p align="center">
+  <img src="docs/assets/bars.gif" alt="fuzzyScore, JavaScript vs Zig port: peak memory 47.2 MB vs 4.1 MB, one process over 288 cases 40.7 ms vs 5.6 ms, per call 61.3 ns vs 31.6 ns" width="880">
+  <br>
+  <sub>Memory and one-process time: <code>python bench/peakmem.py --runs 15 -- &lt;command&gt;</code>, running the recorder and the Zig harness directly. Per call: <code>zig-anything bench fuzzyScore</code>. Regenerate with <code>python scripts/make_bars_gif.py</code>.</sub>
+</p>
+
+All numbers below were measured on one machine: AMD Ryzen 7 5700X, 32 GB RAM, Windows 11, Zig 0.17.1, Node.js 24.21, Python 3.12.10. Each row is a median of 5 runs. Reproduce them with the commands shown; your numbers will differ.
+
+**Example ports** (`zig-anything bench <unit>`):
+
+| Unit | Original | Per call: original | Per call: Zig | Per call: speedup | One process, all cases: original | One process, all cases: Zig |
+| --- | --- | --- | --- | --- | --- | --- |
+| [`levenshtein`](examples/levenshtein-py) | Python 3.12 | 51.9 µs | 0.33 µs | **159x** | 162.8 ms | 17.9 ms |
+| [`fuzzyScore`](examples/fuzzy-js) | Node.js 24 (V8 JIT) | 61.3 ns | 31.6 ns | **1.9x** | 54.2 ms | 17.7 ms |
+
+"Per call" excludes runtime startup: both sides parse the inputs first, run one untimed warm-up pass, then run calibrated timed passes. "One process" is wall time for a fresh process that loads the code and runs every case once. Cases that throw are excluded from benchmarks, because exceptions cost much more in most runtimes than errors in Zig, and that would flatter the port.
+
+A JIT is a strong baseline. The first `fuzzyScore` port matched every case but ran 2.6x *slower* than V8 (164 ns per call), because it converted both strings to UTF-16 buffers on every call. Profiling showed the conversion, not allocation, was the cost. JavaScript knows string lengths in O(1), while the port scanned whole strings to learn them. The final port streams UTF-16 units straight from the UTF-8 input, with an inline ASCII fast path, and drops the redundant length check. That brought it to 31.6 ns. The recorded cases stayed 288/288 green throughout, which is what made the rewrite safe. The story is in [examples/fuzzy-js](examples/fuzzy-js).
+
+**The tool itself**:
+
+| Measurement | Result | Reproduce |
+| --- | --- | --- |
+| binary size, size-optimized, x86_64 Linux / macOS / Windows | 462 KB / 438 KB / 768 KB | `zig build release` |
+| startup, `zig-anything --version` (Windows, includes process creation) | 4.0 ms median | `python bench/startup.py -- zig-out/bin/zig-anything --version` |
+| peak memory of a port harness running 288 cases (`fuzzyScore`) | 4.1 MB, vs 47.2 MB for Node running the original | `python bench/peakmem.py -- <command>` |
+| scan JavaScript | 137 MiB/s | `zig build microbench` |
+| scan Python | 200 MiB/s | `zig build microbench` |
+| parse and compare 100,000 recorded cases | 228 ms (70 MiB/s) | `zig build microbench` |
+| generate 1,000 random cases for 3 parameters | 0.30 ms | `zig build microbench` |
 
 ## Install
 
@@ -205,39 +238,6 @@ pub fn slugify(allocator: std.mem.Allocator, text: []const u8) ![]const u8 {
 - **`port.zig` is plain Zig.** The unit's `build.zig` exposes it as the module `port`, so a Zig program can depend on it directly once the migration is complete.
 
 Inferred types map like this: `number` → `f64`, `int` → `i64`, `string` → `[]const u8`, `bool` → `bool`, `number_array` → `[]const f64`, `int_array` → `[]const i64`, `string_array` → `[]const []const u8`, and anything else → `std.json.Value`.
-
-## Benchmarks
-
-<p align="center">
-  <img src="docs/assets/bars.gif" alt="fuzzyScore, JavaScript vs Zig port: peak memory 47.2 MB vs 4.1 MB, one process over 288 cases 40.7 ms vs 5.6 ms, per call 61.3 ns vs 31.6 ns" width="880">
-  <br>
-  <sub>Memory and one-process time: <code>python bench/peakmem.py --runs 15 -- &lt;command&gt;</code>, running the recorder and the Zig harness directly. Per call: <code>zig-anything bench fuzzyScore</code>. Regenerate with <code>python scripts/make_bars_gif.py</code>.</sub>
-</p>
-
-All numbers below were measured on one machine: AMD Ryzen 7 5700X, 32 GB RAM, Windows 11, Zig 0.17.1, Node.js 24.21, Python 3.12.10. Each row is a median of 5 runs. Reproduce them with the commands shown; your numbers will differ.
-
-**Example ports** (`zig-anything bench <unit>`):
-
-| Unit | Original | Per call: original | Per call: Zig | Per call: speedup | One process, all cases: original | One process, all cases: Zig |
-| --- | --- | --- | --- | --- | --- | --- |
-| [`levenshtein`](examples/levenshtein-py) | Python 3.12 | 51.9 µs | 0.33 µs | **159x** | 162.8 ms | 17.9 ms |
-| [`fuzzyScore`](examples/fuzzy-js) | Node.js 24 (V8 JIT) | 61.3 ns | 31.6 ns | **1.9x** | 54.2 ms | 17.7 ms |
-
-"Per call" excludes runtime startup: both sides parse the inputs first, run one untimed warm-up pass, then run calibrated timed passes. "One process" is wall time for a fresh process that loads the code and runs every case once. Cases that throw are excluded from benchmarks, because exceptions cost much more in most runtimes than errors in Zig, and that would flatter the port.
-
-A JIT is a strong baseline. The first `fuzzyScore` port matched every case but ran 2.6x *slower* than V8 (164 ns per call), because it converted both strings to UTF-16 buffers on every call. Profiling showed the conversion, not allocation, was the cost. JavaScript knows string lengths in O(1), while the port scanned whole strings to learn them. The final port streams UTF-16 units straight from the UTF-8 input, with an inline ASCII fast path, and drops the redundant length check. That brought it to 31.6 ns. The recorded cases stayed 288/288 green throughout, which is what made the rewrite safe. The story is in [examples/fuzzy-js](examples/fuzzy-js).
-
-**The tool itself**:
-
-| Measurement | Result | Reproduce |
-| --- | --- | --- |
-| binary size, size-optimized, x86_64 Linux / macOS / Windows | 462 KB / 438 KB / 768 KB | `zig build release` |
-| startup, `zig-anything --version` (Windows, includes process creation) | 4.0 ms median | `python bench/startup.py -- zig-out/bin/zig-anything --version` |
-| peak memory of a port harness running 288 cases (`fuzzyScore`) | 4.1 MB, vs 47.2 MB for Node running the original | `python bench/peakmem.py -- <command>` |
-| scan JavaScript | 137 MiB/s | `zig build microbench` |
-| scan Python | 200 MiB/s | `zig build microbench` |
-| parse and compare 100,000 recorded cases | 228 ms (70 MiB/s) | `zig build microbench` |
-| generate 1,000 random cases for 3 parameters | 0.30 ms | `zig build microbench` |
 
 ## Configuration
 
