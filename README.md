@@ -2,7 +2,7 @@
   <img src="docs/assets/logo.png" alt="ZigAnything logo" width="160">
 </p>
 
-<h1 align="center">ZigAnything</h1>
+<h1 align="center">zig-anything</h1>
 
 <p align="center">
   <strong>Port JavaScript, TypeScript and Python code to Zig one function at a time, and prove every port behaves exactly like the original.</strong>
