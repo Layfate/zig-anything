@@ -19,18 +19,24 @@ pub fn runtimeLabel(u: unit_mod.Unit) []const u8 {
 /// Runs the recorder for `u` over `cases_path`, writing results to
 /// `out_path`. Returns the process result (stderr is useful on failure).
 pub fn invoke(c: *cli.Ctx, u: unit_mod.Unit, mode: Mode, cases_path: []const u8, out_path: []const u8, iterations: u64) cli.Reported!proc.Result {
+    return invokeSource(c, u, u.source_abs, mode, cases_path, out_path, iterations);
+}
+
+/// Like `invoke`, but loads the function from `source` (used to replay cases
+/// through a generated bridge module instead of the original).
+pub fn invokeSource(c: *cli.Ctx, u: unit_mod.Unit, source: []const u8, mode: Mode, cases_path: []const u8, out_path: []const u8, iterations: u64) cli.Reported!proc.Result {
     try u.ensureWorkDir(c);
     const is_js = u.manifest.language.isJs();
     const script_path = u.workPath(c.arena, if (is_js) "record.mjs" else "record.py");
     Io.Dir.cwd().writeFile(c.io, .{ .sub_path = script_path, .data = if (is_js) js_recorder else py_recorder }) catch |err|
         return c.fail("cannot write {s}: {s}", .{ script_path, @errorName(err) });
 
-    Io.Dir.cwd().access(c.io, u.source_abs, .{}) catch
-        return c.fail("source file {s} (from unit.json) does not exist", .{c.rel(u.source_abs)});
+    Io.Dir.cwd().access(c.io, source, .{}) catch
+        return c.fail("source file {s} does not exist", .{c.rel(source)});
 
     const iters = std.fmt.allocPrint(c.arena, "{d}", .{iterations}) catch return c.fail("out of memory", .{});
     const prefix = if (is_js) u.cfg.config.node else u.cfg.config.python;
-    const argv = proc.command(c, prefix, &.{ script_path, @tagName(mode), u.source_abs, u.manifest.function, cases_path, out_path, iters });
+    const argv = proc.command(c, prefix, &.{ script_path, @tagName(mode), source, u.manifest.function, cases_path, out_path, iters });
 
     var env = c.env.clone(c.arena) catch return c.fail("out of memory", .{});
     if (!is_js) {
@@ -43,7 +49,7 @@ pub fn invoke(c: *cli.Ctx, u: unit_mod.Unit, mode: Mode, cases_path: []const u8,
         env.put("NODE_NO_WARNINGS", "1") catch {};
     }
     return proc.run(c, argv, .{
-        .cwd = std.fs.path.dirname(u.source_abs),
+        .cwd = std.fs.path.dirname(source),
         .timeout_s = u.cfg.config.timeout,
         .environ_map = &env,
         .missing_hint = if (is_js)

@@ -8,6 +8,7 @@
 //! Do not edit the copy inside a unit; `zig-anything init --force` rewrites it.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const json = std.json;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -364,6 +365,89 @@ pub fn harnessMain(init: std.process.Init, comptime f: anytype) !void {
     } else usage();
 }
 
+// ---------------------------------------------------------------- bridge
+
+/// C ABI entry points used by `zig-anything bridge`: the port compiled to
+/// WebAssembly (loaded by Node) or a shared library (loaded by Python's
+/// ctypes). The caller passes a JSON array of arguments and receives one
+/// result object in the harness format: {"ok":...}, {"err":"Name"} or
+/// {"harness_error":"..."}. Buffers returned by `call` and `alloc` must be
+/// released with `free` using the same length.
+pub fn Bridge(comptime f: anytype) type {
+    return struct {
+        const gpa: Allocator = if (builtin.cpu.arch.isWasm()) std.heap.wasm_allocator else std.heap.smp_allocator;
+
+        pub fn alloc(n: usize) ?[*]u8 {
+            const s = gpa.alloc(u8, @max(n, 1)) catch return null;
+            return s.ptr;
+        }
+
+        pub fn free(p: [*]u8, n: usize) void {
+            gpa.free(p[0..@max(n, 1)]);
+        }
+
+        /// Runs one call: `args` is a JSON array of arguments. Returns one
+        /// result object. Returns null only when memory is exhausted.
+        pub fn call(args_ptr: [*]const u8, args_len: usize, out_len: *usize) ?[*]u8 {
+            const out = run(args_ptr[0..args_len], false) catch return null;
+            out_len.* = out.len;
+            return out.ptr;
+        }
+
+        /// Runs many calls in one crossing: `args` is a JSON array of
+        /// argument arrays. Returns one result object per line.
+        pub fn callBatch(args_ptr: [*]const u8, args_len: usize, out_len: *usize) ?[*]u8 {
+            const out = run(args_ptr[0..args_len], true) catch return null;
+            out_len.* = out.len;
+            return out.ptr;
+        }
+
+        fn run(input: []const u8, batch: bool) error{OutOfMemory}![]u8 {
+            // `out_arena` holds the response; `call_arena` holds one call's
+            // arguments and port allocations and is reset between calls.
+            var out_arena: std.heap.ArenaAllocator = .init(gpa);
+            defer out_arena.deinit();
+            var call_arena: std.heap.ArenaAllocator = .init(gpa);
+            defer call_arena.deinit();
+            var aw: Io.Writer.Allocating = .init(out_arena.allocator());
+            const w = &aw.writer;
+            write: {
+                const root = json.parseFromSliceLeaky(json.Value, out_arena.allocator(), input, .{}) catch {
+                    w.writeAll("{\"harness_error\":\"arguments are not valid JSON\"}") catch return error.OutOfMemory;
+                    break :write;
+                };
+                if (root != .array) {
+                    w.writeAll("{\"harness_error\":\"arguments must be a JSON array\"}") catch return error.OutOfMemory;
+                    break :write;
+                }
+                if (!batch) {
+                    writeOne(w, call_arena.allocator(), root.array.items) catch return error.OutOfMemory;
+                    break :write;
+                }
+                for (root.array.items) |item| {
+                    defer _ = call_arena.reset(.retain_capacity);
+                    if (item != .array) {
+                        w.writeAll("{\"harness_error\":\"each batch item must be an argument array\"}\n") catch return error.OutOfMemory;
+                        continue;
+                    }
+                    writeOne(w, call_arena.allocator(), item.array.items) catch return error.OutOfMemory;
+                }
+            }
+            const text = std.mem.trimEnd(u8, aw.written(), "\n");
+            const out = try gpa.alloc(u8, @max(text.len, 1));
+            @memcpy(out[0..text.len], text);
+            return out[0..text.len];
+        }
+
+        fn writeOne(w: *Io.Writer, a: Allocator, args: []const json.Value) Io.Writer.Error!void {
+            const tuple = buildArgs(f, a, a, args) catch |err| {
+                return w.print("{{\"harness_error\":\"cannot decode arguments: {s}\"}}\n", .{@errorName(err)});
+            };
+            try callAndWrite(f, w, tuple);
+        }
+    };
+}
+
 // ---------------------------------------------------------------- tests
 
 fn parse(a: Allocator, s: []const u8) !json.Value {
@@ -450,4 +534,35 @@ test "callAndWrite emits ok and err lines" {
     try callAndWrite(mayFail, &aw.writer, .{-1});
     try callAndWrite(addOne, &aw.writer, .{41});
     try std.testing.expectEqualStrings("{\"ok\":2}\n{\"err\":\"Negative\"}\n{\"ok\":42}\n", aw.written());
+}
+
+test "bridge calls the port with JSON arguments" {
+    const B = Bridge(mayFail);
+    var n: usize = 0;
+    const args = "[16]";
+    const p = B.call(args.ptr, args.len, &n).?;
+    defer B.free(p, n);
+    try std.testing.expectEqualStrings("{\"ok\":4}", p[0..n]);
+    const bad = "[\"x\"]";
+    const q = B.call(bad.ptr, bad.len, &n).?;
+    defer B.free(q, n);
+    try std.testing.expect(std.mem.startsWith(u8, q[0..n], "{\"harness_error\""));
+    const neg = "[-1]";
+    const r = B.call(neg.ptr, neg.len, &n).?;
+    defer B.free(r, n);
+    try std.testing.expectEqualStrings("{\"err\":\"Negative\"}", r[0..n]);
+}
+
+test "bridge batch runs many calls in one crossing" {
+    const B = Bridge(mayFail);
+    var n: usize = 0;
+    const args = "[[16],[-1],[\"x\"],7]";
+    const p = B.callBatch(args.ptr, args.len, &n).?;
+    defer B.free(p, n);
+    var lines = std.mem.splitScalar(u8, p[0..n], '\n');
+    try std.testing.expectEqualStrings("{\"ok\":4}", lines.next().?);
+    try std.testing.expectEqualStrings("{\"err\":\"Negative\"}", lines.next().?);
+    try std.testing.expect(std.mem.startsWith(u8, lines.next().?, "{\"harness_error\""));
+    try std.testing.expect(std.mem.startsWith(u8, lines.next().?, "{\"harness_error\""));
+    try std.testing.expectEqual(@as(?[]const u8, null), lines.next());
 }

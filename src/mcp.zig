@@ -63,6 +63,10 @@ const tools = [_]Tool{
         unit_arg,
         .{ .prop = "runs", .flag = "--runs", .kind = .number, .help = "Measured runs per side" },
     } },
+    .{ .name = "zig_anything_bridge", .command = "bridge", .description = "Make a finished port callable from the original code (WebAssembly + index.mjs for JS/TS, native library + port.py for Python) and replay every recorded case through it.", .args = &.{
+        unit_arg,
+        .{ .prop = "optimize", .flag = "--optimize", .help = "debug, safe, fast or small" },
+    } },
     .{ .name = "zig_anything_gate", .command = "gate", .description = "Definition of done: port written, cases recorded, builds, port tests pass, every case matches (optionally not slower).", .args = &.{
         unit_arg,
         .{ .prop = "bench", .flag = "--bench", .kind = .boolean, .help = "Also require the port to be at least as fast" },

@@ -121,6 +121,9 @@ fn workflow(c: *Ctx, s: Scenario) !void {
     r = try cli(c, c.work, &.{ "gate", s.function });
     expect(c, "gate fails on the stub", r, 1, "NOT DONE");
 
+    r = try cli(c, c.work, &.{ "bridge", s.function });
+    expect(c, "bridge refuses a stub", r, 3, "TODO(zig-anything)");
+
     try copyFile(c, join(c, &.{ c.work, "solutions", s.solution }), join(c, &.{ c.work, unit, "src", "port.zig" }));
     r = try cli(c, c.work, &.{ "diff", s.function });
     const all = try std.fmt.allocPrint(c.a, "{d}/{d} cases match", .{ n_cases, n_cases });
@@ -128,6 +131,18 @@ fn workflow(c: *Ctx, s: Scenario) !void {
 
     r = try cli(c, c.work, &.{ "gate", s.function });
     expect(c, "gate passes", r, 0, "PASSED");
+
+    r = try cli(c, c.work, &.{ "bridge", s.function });
+    const through = try std.fmt.allocPrint(c.a, "{d}/{d} recorded cases match through the bridge", .{ n_cases, n_cases });
+    expect(c, "bridge builds and replays every case through the binding", r, 0, through);
+    const is_py = std.mem.endsWith(u8, s.source, ".py");
+    const binding = join(c, &.{ c.work, unit, "bridge", if (is_py) "port.py" else "index.mjs" });
+    check(c, "bridge writes the binding", (Io.Dir.cwd().access(c.io, binding, .{}) catch null) != null, r);
+    if (std.mem.endsWith(u8, s.source, ".ts")) {
+        const dts = join(c, &.{ c.work, unit, "bridge", "index.d.ts" });
+        const text = Io.Dir.cwd().readFileAlloc(c.io, dts, c.a, .limited(1 << 16)) catch "";
+        check(c, "bridge writes TypeScript declarations", std.mem.indexOf(u8, text, "export declare function mean(xs: number[]): number;") != null, r);
+    }
 
     // Re-recording with the same seed must be byte-identical.
     const before = try Io.Dir.cwd().readFileAlloc(c.io, cases_path, c.a, .unlimited);
@@ -267,7 +282,7 @@ fn mcp(c: *Ctx) !void {
     }
     check(c, "every response is JSON", all_valid, .{ .code = 0, .out = out });
     check(c, "initialize answered", ids[1], .{ .code = 0, .out = out });
-    check(c, "tools/list returns 8 tools", tool_count == 8, .{ .code = 0, .out = out });
+    check(c, "tools/list returns 9 tools", tool_count == 9, .{ .code = 0, .out = out });
     check(c, "tools/call runs a command", status_ok, .{ .code = 0, .out = out });
     check(c, "missing tool arguments are tool errors", diff_is_error, .{ .code = 0, .out = out });
     check(c, "unknown methods are rejected", method_not_found, .{ .code = 0, .out = out });

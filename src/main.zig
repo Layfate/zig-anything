@@ -12,6 +12,7 @@ const record_cmd = @import("cmd/record.zig");
 const diff_cmd = @import("cmd/diff.zig");
 const bench_cmd = @import("cmd/bench.zig");
 const gate_cmd = @import("cmd/gate.zig");
+const bridge_cmd = @import("cmd/bridge.zig");
 const mcp = @import("mcp.zig");
 const Io = std.Io;
 
@@ -37,6 +38,7 @@ const commands = [_]Command{
     .{ .name = "build", .usage = "build <unit>", .summary = "compile the Zig port and harness", .flags = &diff_cmd.build_flags, .run = diff_cmd.runBuild },
     .{ .name = "diff", .usage = "diff <unit>", .summary = "replay every recorded case against the port", .flags = &diff_cmd.diff_flags, .run = diff_cmd.runDiff },
     .{ .name = "bench", .usage = "bench <unit>", .summary = "time original vs port and give a verdict", .flags = &bench_cmd.flags, .run = bench_cmd.run },
+    .{ .name = "bridge", .usage = "bridge <unit>", .summary = "make the port callable from the original code (wasm for Node, native lib for Python)", .flags = &bridge_cmd.flags, .run = bridge_cmd.run },
     .{ .name = "gate", .usage = "gate <unit>", .summary = "check that a port is done (exit 0) or not (exit 1)", .flags = &gate_cmd.gate_flags, .run = gate_cmd.runGate },
     .{ .name = "status", .usage = "status [dir]", .summary = "overview of every unit", .flags = &gate_cmd.status_flags, .run = gate_cmd.runStatus },
     .{ .name = "mcp", .usage = "mcp", .summary = "serve the commands as MCP tools over stdio", .flags = &mcp.flags, .run = runMcp },
@@ -241,4 +243,5 @@ test {
     _ = @import("mcp.zig");
     _ = @import("cmd/diff.zig");
     _ = @import("cmd/bench.zig");
+    _ = @import("cmd/bridge.zig");
 }

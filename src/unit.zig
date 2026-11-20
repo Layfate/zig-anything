@@ -219,9 +219,19 @@ pub const Optimize = enum {
     }
 };
 
+/// Rewrites the unit's generated runtime when it differs from the version
+/// embedded in this binary, so upgrading zig-anything upgrades every unit.
+pub fn refreshRuntime(c: *cli.Ctx, u: Unit) cli.Reported!void {
+    const p = u.path(c.arena, "src/rt.zig");
+    const current = Io.Dir.cwd().readFileAlloc(c.io, p, c.arena, .limited(4 << 20)) catch "";
+    if (std.mem.eql(u8, current, rt_source)) return;
+    try writeFile(c, p, rt_source);
+}
+
 /// Runs `zig build` for the unit. Prints compiler output and returns false
 /// on failure.
 pub fn build(c: *cli.Ctx, u: Unit, optimize: Optimize, prefix: []const u8, step: ?[]const u8) cli.Reported!bool {
+    try refreshRuntime(c, u);
     const opt_arg = std.fmt.allocPrint(c.arena, "-Doptimize={s}", .{@tagName(optimize)}) catch return c.fail("out of memory", .{});
     var argv: std.ArrayList([]const u8) = .empty;
     argv.appendSlice(c.arena, &.{ u.cfg.config.zig, "build" }) catch return c.fail("out of memory", .{});
