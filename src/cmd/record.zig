@@ -9,6 +9,7 @@ const jsonx = @import("../jsonx.zig");
 const cases_mod = @import("../cases.zig");
 const runtime = @import("../runtime.zig");
 const unit_mod = @import("../unit.zig");
+const program = @import("program.zig");
 const Io = std.Io;
 
 pub const flags = [_]cli.Flag{
@@ -92,6 +93,7 @@ fn hasOpaque(v: json.Value) bool {
 
 pub fn run(c: *cli.Ctx, args: cli.Parsed) !u8 {
     const u = try unit_mod.load(c, args.pos(0));
+    if (u.isCli()) return program.record(c, u, args);
     const cfg = u.cfg.config;
     const opts: gen.Options = .{
         .samples = try cli.parseInt(u32, c, args, "samples", cfg.samples),

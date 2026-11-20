@@ -13,6 +13,7 @@ const diff_cmd = @import("cmd/diff.zig");
 const bench_cmd = @import("cmd/bench.zig");
 const gate_cmd = @import("cmd/gate.zig");
 const bridge_cmd = @import("cmd/bridge.zig");
+const program_cmd = @import("cmd/program.zig");
 const mcp = @import("mcp.zig");
 const Io = std.Io;
 
@@ -34,6 +35,7 @@ fn runMcp(c: *cli.Ctx, args: cli.Parsed) anyerror!u8 {
 const commands = [_]Command{
     .{ .name = "scan", .usage = "scan [path]", .summary = "list portable functions and their inferred types", .flags = &scan_cmd.scan_flags, .run = scan_cmd.runScan },
     .{ .name = "init", .usage = "init <source-file> <function>", .summary = "create a port unit (manifest, Zig stub, harness)", .flags = &scan_cmd.init_flags, .run = scan_cmd.runInit },
+    .{ .name = "init-cli", .usage = "init-cli <name> -- <command...>", .summary = "create a program unit for a whole command-line program", .flags = &program_cmd.init_flags, .run = program_cmd.runInit },
     .{ .name = "record", .usage = "record <unit>", .summary = "run the original on edge cases and save its behavior", .flags = &record_cmd.flags, .run = record_cmd.run },
     .{ .name = "build", .usage = "build <unit>", .summary = "compile the Zig port and harness", .flags = &diff_cmd.build_flags, .run = diff_cmd.runBuild },
     .{ .name = "diff", .usage = "diff <unit>", .summary = "replay every recorded case against the port", .flags = &diff_cmd.diff_flags, .run = diff_cmd.runDiff },
@@ -244,4 +246,5 @@ test {
     _ = @import("cmd/diff.zig");
     _ = @import("cmd/bench.zig");
     _ = @import("cmd/bridge.zig");
+    _ = @import("cmd/program.zig");
 }

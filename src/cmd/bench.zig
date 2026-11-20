@@ -14,6 +14,7 @@ const proc = @import("../proc.zig");
 const cases_mod = @import("../cases.zig");
 const runtime = @import("../runtime.zig");
 const unit_mod = @import("../unit.zig");
+const program = @import("program.zig");
 const Io = std.Io;
 
 pub const flags = [_]cli.Flag{
@@ -193,6 +194,7 @@ fn ratio(buf: []u8, x: f64) []const u8 {
 
 pub fn run(c: *cli.Ctx, args: cli.Parsed) !u8 {
     const u = try unit_mod.load(c, args.pos(0));
+    if (u.isCli()) return program.runBench(c, u, args);
     if (unit_mod.portIsStub(c, u)) c.warn("src/port.zig still has the {s} marker; timings may be meaningless", .{unit_mod.todo_marker});
     const runs = try cli.parseInt(u32, c, args, "runs", 5);
     if (runs == 0) return c.fail("--runs must be at least 1", .{});

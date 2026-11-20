@@ -13,7 +13,7 @@ const py_recorder = @embedFile("assets/record.py");
 pub const Mode = enum { run, bench };
 
 pub fn runtimeLabel(u: unit_mod.Unit) []const u8 {
-    return if (u.manifest.language.isJs()) "node" else "python";
+    return if (u.manifest.lang_().isJs()) "node" else "python";
 }
 
 /// Runs the recorder for `u` over `cases_path`, writing results to
@@ -26,7 +26,7 @@ pub fn invoke(c: *cli.Ctx, u: unit_mod.Unit, mode: Mode, cases_path: []const u8,
 /// through a generated bridge module instead of the original).
 pub fn invokeSource(c: *cli.Ctx, u: unit_mod.Unit, source: []const u8, mode: Mode, cases_path: []const u8, out_path: []const u8, iterations: u64) cli.Reported!proc.Result {
     try u.ensureWorkDir(c);
-    const is_js = u.manifest.language.isJs();
+    const is_js = u.manifest.lang_().isJs();
     const script_path = u.workPath(c.arena, if (is_js) "record.mjs" else "record.py");
     Io.Dir.cwd().writeFile(c.io, .{ .sub_path = script_path, .data = if (is_js) js_recorder else py_recorder }) catch |err|
         return c.fail("cannot write {s}: {s}", .{ script_path, @errorName(err) });

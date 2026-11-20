@@ -151,6 +151,31 @@ fn workflow(c: *Ctx, s: Scenario) !void {
     check(c, "recording is reproducible", r.code == 0 and std.mem.eql(u8, before, after), r);
 }
 
+fn programWorkflow(c: *Ctx) !void {
+    std.debug.print("program unit: python wc\n", .{});
+    var r = try cli(c, c.work, &.{ "init-cli", "wc" });
+    expect(c, "init-cli without a command is explained", r, 3, "usage: zig-anything init-cli");
+    r = try cli(c, c.work, &.{ "init-cli", "wc", "--cwd", "cli", "--", "python", "wc.py" });
+    expect(c, "init-cli creates a program unit", r, 0, "created program unit");
+    const unit = join(c, &.{ c.work, "zig-port", "wc" });
+    try copyFile(c, join(c, &.{ c.work, "cli", "inputs.jsonl" }), join(c, &.{ unit, "inputs.jsonl" }));
+    r = try cli(c, c.work, &.{ "record", "wc" });
+    expect(c, "record runs every invocation", r, 0, "recorded 11 run(s)");
+    r = try cli(c, c.work, &.{ "diff", "wc" });
+    expect(c, "diff fails on the program stub", r, 1, "0/11 cases match");
+    r = try cli(c, c.work, &.{ "bridge", "wc" });
+    expect(c, "bridge rejects program units", r, 3, "function units");
+    try copyFile(c, join(c, &.{ c.work, "solutions", "wc_main.zig" }), join(c, &.{ unit, "src", "main.zig" }));
+    r = try cli(c, c.work, &.{ "diff", "wc" });
+    expect(c, "diff passes with a correct rewrite", r, 0, "11/11 cases match");
+    r = try cli(c, c.work, &.{ "diff", "wc", "--compare-stderr", "--exact-newlines" });
+    check(c, "strict comparison flags are accepted", r.code == 0 or r.code == 1, r);
+    r = try cli(c, c.work, &.{ "gate", "wc" });
+    expect(c, "gate passes for the program", r, 0, "PASSED: wc is a faithful port");
+    r = try cli(c, c.work, &.{ "bench", "wc", "--runs", "1" });
+    expect(c, "bench times whole processes", r, 0, "verdict:");
+}
+
 fn regressions(c: *Ctx) !void {
     std.debug.print("regressions and error handling\n", .{});
     const unit_src = join(c, &.{ c.work, "zig-port", "slugify", "src", "port.zig" });
@@ -282,7 +307,7 @@ fn mcp(c: *Ctx) !void {
     }
     check(c, "every response is JSON", all_valid, .{ .code = 0, .out = out });
     check(c, "initialize answered", ids[1], .{ .code = 0, .out = out });
-    check(c, "tools/list returns 9 tools", tool_count == 9, .{ .code = 0, .out = out });
+    check(c, "tools/list returns 10 tools", tool_count == 10, .{ .code = 0, .out = out });
     check(c, "tools/call runs a command", status_ok, .{ .code = 0, .out = out });
     check(c, "missing tool arguments are tool errors", diff_is_error, .{ .code = 0, .out = out });
     check(c, "unknown methods are rejected", method_not_found, .{ .code = 0, .out = out });
@@ -335,6 +360,7 @@ pub fn main(init: std.process.Init) !u8 {
     try workflow(&c, .{ .label = "javascript: slugify", .source = "js/textutil.mjs", .function = "slugify", .solution = "slugify.zig" });
     try workflow(&c, .{ .label = "typescript: mean", .source = "ts/stats.ts", .function = "mean", .solution = "mean.zig" });
     try workflow(&c, .{ .label = "python: digit_sum", .source = "py/mathutil.py", .function = "digit_sum", .solution = "digit_sum.zig" });
+    try programWorkflow(&c);
     try regressions(&c);
     try mcp(&c);
     try examples(&c, examples_dir);

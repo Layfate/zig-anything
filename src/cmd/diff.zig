@@ -10,6 +10,7 @@ const cases_mod = @import("../cases.zig");
 const unit_mod = @import("../unit.zig");
 const Io = std.Io;
 const Case = cases_mod.Case;
+const program = @import("program.zig");
 
 pub const build_flags = [_]cli.Flag{
     .{ .name = "optimize", .value = "MODE", .help = "debug, safe (default), fast or small" },
@@ -22,6 +23,8 @@ pub const diff_flags = [_]cli.Flag{
     .{ .name = "no-build", .help = "use the existing harness binary" },
     .{ .name = "optimize", .value = "MODE", .help = "build mode: debug, safe (default; keeps safety checks), fast or small" },
     .{ .name = "json", .help = "machine-readable summary" },
+    .{ .name = "compare-stderr", .help = "program units: also compare stderr" },
+    .{ .name = "exact-newlines", .help = "program units: treat CRLF and LF line endings as different" },
 };
 
 pub fn parseOptimize(c: *cli.Ctx, args: cli.Parsed) cli.Reported!unit_mod.Optimize {
@@ -51,6 +54,9 @@ pub const Kind = enum {
     harness,
     crash,
     not_run,
+    stdout,
+    exit_code,
+    stderr,
 
     pub fn label(k: Kind) []const u8 {
         return switch (k) {
@@ -61,6 +67,9 @@ pub const Kind = enum {
             .harness => "harness could not call the port",
             .crash => "port crashed on this case",
             .not_run => "not run (port crashed earlier)",
+            .stdout => "different stdout",
+            .exit_code => "different exit code",
+            .stderr => "different stderr",
         };
     }
 };
@@ -169,7 +178,7 @@ fn show(c: *cli.Ctx, v: ?json.Value) []const u8 {
     return jsonx.truncate(c.arena, s, 160) catch s;
 }
 
-fn saveSummary(c: *cli.Ctx, u: unit_mod.Unit, o: Outcome) void {
+pub fn saveSummary(c: *cli.Ctx, u: unit_mod.Unit, o: Outcome) void {
     const s = std.fmt.allocPrint(c.arena, "{{\"total\":{d},\"compared\":{d},\"matched\":{d},\"flaky\":{d},\"crashed\":{},\"passed\":{}}}\n", .{
         o.total, o.compared, o.matched, o.flaky, o.crashed, o.passed(),
     }) catch return;
@@ -201,6 +210,7 @@ pub fn printReport(c: *cli.Ctx, u: unit_mod.Unit, o: Outcome, limit: usize) void
 
 pub fn runDiff(c: *cli.Ctx, args: cli.Parsed) !u8 {
     const u = try unit_mod.load(c, args.pos(0));
+    if (u.isCli()) return program.runDiff(c, u, args);
     const cs = try cases_mod.load(c, u);
     const opts: Options = .{
         .tolerance = try cli.parseFloat(c, args, "tolerance", u.cfg.config.tolerance),

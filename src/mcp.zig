@@ -19,7 +19,8 @@ const Arg = struct {
     prop: []const u8,
     /// CLI flag ("" = positional).
     flag: []const u8 = "",
-    kind: enum { string, number, boolean } = .string,
+    /// `array` (of strings) is passed after `--`, at the end of the command line.
+    kind: enum { string, number, boolean, array } = .string,
     required: bool = false,
     help: []const u8,
 };
@@ -43,6 +44,12 @@ const tools = [_]Tool{
         .{ .prop = "function", .required = true, .help = "Function name" },
         .{ .prop = "out", .flag = "--out", .help = "Unit directory (optional)" },
         .{ .prop = "force", .flag = "--force", .kind = .boolean, .help = "Regenerate manifest/harness of an existing unit; port.zig is kept" },
+    } },
+    .{ .name = "zig_anything_init_cli", .command = "init-cli", .description = "Create a program unit for a whole command-line program in any language; its invocations go in inputs.jsonl and the Zig rewrite in src/main.zig.", .args = &.{
+        .{ .prop = "name", .required = true, .help = "Unit name" },
+        .{ .prop = "command", .kind = .array, .required = true, .help = "The original program and leading arguments, e.g. [\"python\", \"tools/wc.py\"]" },
+        .{ .prop = "cwd", .flag = "--cwd", .help = "Working directory for both programs" },
+        .{ .prop = "out", .flag = "--out", .help = "Unit directory (optional)" },
     } },
     .{ .name = "zig_anything_record", .command = "record", .description = "Run the original function on generated edge cases plus inputs.jsonl and save its behavior to cases.jsonl. Runs the original code.", .args = &.{
         unit_arg,
@@ -88,7 +95,9 @@ fn writeToolList(w: *Io.Writer) !void {
         for (t.args, 0..) |a, j| {
             if (j != 0) try w.writeByte(',');
             try jsonx.writeString(w, a.prop);
-            try w.print(":{{\"type\":\"{s}\",\"description\":", .{@tagName(a.kind)});
+            if (a.kind == .array) {
+                try w.writeAll(":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":");
+            } else try w.print(":{{\"type\":\"{s}\",\"description\":", .{@tagName(a.kind)});
             try jsonx.writeString(w, a.help);
             try w.writeByte('}');
         }
@@ -115,12 +124,27 @@ fn toolArgv(a: Allocator, self_exe: []const u8, t: Tool, arguments: ?json.Value,
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.appendSlice(a, &.{ self_exe, "--no-color", t.command });
     const obj: ?json.ObjectMap = if (arguments) |v| (if (v == .object) v.object else null) else null;
+    var tail: std.ArrayList([]const u8) = .empty;
     for (t.args) |arg| {
         const v = if (obj) |o| o.get(arg.prop) else null;
         if (v == null or v.? == .null) {
             if (arg.required) {
                 err_msg.* = try std.fmt.allocPrint(a, "missing required argument '{s}'", .{arg.prop});
                 return error.BadArguments;
+            }
+            continue;
+        }
+        if (arg.kind == .array) {
+            if (v.? != .array or v.?.array.items.len == 0) {
+                err_msg.* = try std.fmt.allocPrint(a, "argument '{s}' must be a non-empty array of strings", .{arg.prop});
+                return error.BadArguments;
+            }
+            for (v.?.array.items) |item| {
+                if (item != .string) {
+                    err_msg.* = try std.fmt.allocPrint(a, "argument '{s}' must contain only strings", .{arg.prop});
+                    return error.BadArguments;
+                }
+                try tail.append(a, item.string);
             }
             continue;
         }
@@ -146,6 +170,10 @@ fn toolArgv(a: Allocator, self_exe: []const u8, t: Tool, arguments: ?json.Value,
         if (arg.flag.len == 0) {
             try argv.append(a, text);
         } else try argv.appendSlice(a, &.{ arg.flag, text });
+    }
+    if (tail.items.len > 0) {
+        try argv.append(a, "--");
+        try argv.appendSlice(a, tail.items);
     }
     return argv.items;
 }
@@ -297,4 +325,16 @@ test "tool list is valid JSON" {
     const parsed = try json.parseFromSlice(json.Value, std.testing.allocator, aw.written(), .{});
     defer parsed.deinit();
     try std.testing.expectEqual(tools.len, parsed.value.object.get("tools").?.array.items.len);
+}
+
+test "array arguments go after --" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const args = try json.parseFromSliceLeaky(json.Value, a, "{\"name\":\"wc\",\"command\":[\"python\",\"wc.py\"],\"cwd\":\"cli\"}", .{});
+    var err: []const u8 = "";
+    const argv = try toolArgv(a, "za", findTool("zig_anything_init_cli").?, args, &err);
+    const want = [_][]const u8{ "za", "--no-color", "init-cli", "wc", "--cwd", "cli", "--", "python", "wc.py" };
+    try std.testing.expectEqual(want.len, argv.len);
+    for (want, argv) |x, y| try std.testing.expectEqualStrings(x, y);
 }

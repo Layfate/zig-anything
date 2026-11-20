@@ -22,25 +22,58 @@ pub const Options = struct {
     environ_map: ?*const std.process.Environ.Map = null,
     /// What to tell the user if the executable cannot be started.
     missing_hint: ?[]const u8 = null,
+    /// File to feed to the child's stdin (default: no stdin).
+    stdin_path: ?[]const u8 = null,
 };
+
+const RunError = std.process.SpawnError || Io.File.MultiReader.UnendingError || Io.Timeout.Error ||
+    Io.File.OpenError || error{StreamTooLong};
+
+const Captured = struct { term: std.process.Child.Term, stdout: []u8, stderr: []u8 };
+
+/// std.process.run, plus an optional stdin file.
+fn spawnCapture(c: *cli.Ctx, argv: []const []const u8, opts: Options) RunError!Captured {
+    const io = c.io;
+    var stdin_file: ?Io.File = null;
+    if (opts.stdin_path) |p| stdin_file = try Io.Dir.cwd().openFile(io, p, .{});
+    defer if (stdin_file) |f| f.close(io);
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .cwd = if (opts.cwd) |d| .{ .path = d } else .inherit,
+        .environ_map = opts.environ_map,
+        // The default for std.process.run (true) makes Windows start a
+        // hidden console host for every child: ~9 ms per process.
+        .create_no_window = false,
+        .stdin = if (stdin_file) |f| .{ .file = f } else .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(io);
+    var buffers: Io.File.MultiReader.Buffer(2) = undefined;
+    var mr: Io.File.MultiReader = undefined;
+    mr.init(c.arena, io, buffers.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer mr.deinit();
+    const timeout: Io.Timeout = if (opts.timeout_s == 0) .none else .{ .duration = .{
+        .raw = .fromSeconds(opts.timeout_s),
+        .clock = .awake,
+    } };
+    const deadline: Io.Timeout = if (timeout.toTimestamp(io)) |d| .{ .deadline = d } else .none;
+    while (mr.fill(4096, deadline)) |_| {} else |err| switch (err) {
+        error.EndOfStream => {},
+        else => |e| return e,
+    }
+    try mr.checkAnyError();
+    const term = try child.wait(io);
+    return .{ .term = term, .stdout = try mr.toOwnedSlice(0), .stderr = try mr.toOwnedSlice(1) };
+}
 
 /// Runs `argv` to completion and captures its output. Failing to start the
 /// process (missing executable, timeout) is reported as a user-facing error.
 pub fn run(c: *cli.Ctx, argv: []const []const u8, opts: Options) cli.Reported!Result {
     const start = Io.Timestamp.now(c.io, .awake);
-    const r = std.process.run(c.arena, c.io, .{
-        .argv = argv,
-        .cwd = if (opts.cwd) |d| .{ .path = d } else .inherit,
-        .environ_map = opts.environ_map,
-        // The default (true) makes Windows start a hidden console host for
-        // every child, which costs ~9 ms per process and skews `bench`.
-        .create_no_window = false,
-        .timeout = if (opts.timeout_s == 0) .none else .{ .duration = .{
-            .raw = .fromSeconds(opts.timeout_s),
-            .clock = .awake,
-        } },
-    }) catch |err| switch (err) {
+    const r = spawnCapture(c, argv, opts) catch |err| switch (err) {
         error.FileNotFound, error.InvalidExe => {
+            if (opts.stdin_path) |p| Io.Dir.cwd().access(c.io, p, .{}) catch return c.fail("cannot open stdin file {s}", .{p});
             if (opts.missing_hint) |h| c.hint("{s}", .{h});
             return c.fail("could not start `{s}`: not found on PATH", .{argv[0]});
         },

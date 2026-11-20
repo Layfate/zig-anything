@@ -1,0 +1,12 @@
+# Invocations recorded for the wc program unit.
+{"args": [], "stdin": "hello world\n"}
+{"args": ["-l"], "stdin": "a\nb\nc\n"}
+{"args": ["-w"], "stdin": "  spaced   out\twords \n"}
+{"args": ["-c"], "stdin": "héllo wörld 🎉\n"}
+{"args": ["-l", "-c"], "stdin": ""}
+["sample.txt"]
+["-w", "sample.txt"]
+["sample.txt", "sample.txt"]
+["missing.txt"]
+["--bogus"]
+{"args": ["-"], "stdin": "no trailing newline"}

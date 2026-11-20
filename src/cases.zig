@@ -16,6 +16,8 @@ pub const Case = struct {
     args: json.Value,
     expect: json.Value,
     flaky: bool,
+    /// cli units: text fed to the program's stdin.
+    stdin: ?[]const u8 = null,
     /// The original line, reused when writing benchmark inputs.
     raw: []const u8,
 
@@ -56,7 +58,8 @@ pub fn parseCases(a: Allocator, text: []const u8) error{ BadCase, OutOfMemory }!
             else => n,
         } else n;
         const flaky = if (o.get("flaky")) |f| f == .bool and f.bool else false;
-        try out.append(a, .{ .id = id, .args = args, .expect = expect, .flaky = flaky, .raw = line });
+        const stdin: ?[]const u8 = if (o.get("stdin")) |si| (if (si == .string) si.string else null) else null;
+        try out.append(a, .{ .id = id, .args = args, .expect = expect, .flaky = flaky, .stdin = stdin, .raw = line });
     }
     return out.toOwnedSlice(a);
 }

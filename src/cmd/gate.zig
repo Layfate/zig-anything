@@ -10,6 +10,7 @@ const cases_mod = @import("../cases.zig");
 const unit_mod = @import("../unit.zig");
 const diff = @import("diff.zig");
 const bench = @import("bench.zig");
+const program = @import("program.zig");
 const Io = std.Io;
 
 pub const gate_flags = [_]cli.Flag{
@@ -48,13 +49,13 @@ pub fn runGate(c: *cli.Ctx, args: cli.Parsed) !u8 {
     }.f;
     if (!json_out) c.print("{s}gate {s}{s}\n", .{ c.s(.bold), c.rel(u.dir), c.s(.reset) });
 
-    add(c, &checks, .{ .name = "manifest", .state = .pass, .detail = u.manifest.function }, json_out);
+    add(c, &checks, .{ .name = "manifest", .state = .pass, .detail = u.manifest.name }, json_out);
 
     const stub = unit_mod.portIsStub(c, u);
     add(c, &checks, .{
         .name = "port written",
         .state = if (stub) .fail else .pass,
-        .detail = if (stub) "src/port.zig still contains " ++ unit_mod.todo_marker else "no TODO marker",
+        .detail = if (stub) std.fmt.allocPrint(c.arena, "{s} still contains " ++ unit_mod.todo_marker, .{u.portFile()}) catch "" else "no TODO marker",
     }, json_out);
 
     // Cases (load directly so a missing file is a failed check, not an abort).
@@ -80,10 +81,13 @@ pub fn runGate(c: *cli.Ctx, args: cli.Parsed) !u8 {
 
     var diff_ok = false;
     if (built and stable > 0) {
-        const o = try diff.replay(c, u, cs, .{
-            .tolerance = try cli.parseFloat(c, args, "tolerance", u.cfg.config.tolerance),
-            .strict_errors = args.has("strict-errors"),
-        });
+        const o = if (u.isCli())
+            try program.replay(c, u, cs, "zig-out", .{})
+        else
+            try diff.replay(c, u, cs, .{
+                .tolerance = try cli.parseFloat(c, args, "tolerance", u.cfg.config.tolerance),
+                .strict_errors = args.has("strict-errors"),
+            });
         diff_ok = o.passed();
         add(c, &checks, .{
             .name = "behavior",
@@ -94,7 +98,7 @@ pub fn runGate(c: *cli.Ctx, args: cli.Parsed) !u8 {
 
     if (args.has("bench")) {
         if (diff_ok) {
-            const r = try bench.measure(c, u, 3, 200, true, true);
+            const r = if (u.isCli()) try program.measure(c, u, 3, true, true) else try bench.measure(c, u, 3, 200, true, true);
             add(c, &checks, .{
                 .name = "performance",
                 .state = if (r.speedup >= 1.0) .pass else .fail,
@@ -119,7 +123,7 @@ pub fn runGate(c: *cli.Ctx, args: cli.Parsed) !u8 {
         }
         c.print("]}}\n", .{});
     } else if (failed == 0) {
-        c.print("{s}PASSED{s}: {s} is a faithful port\n", .{ c.s(.green), c.s(.reset), u.manifest.function });
+        c.print("{s}PASSED{s}: {s} is a faithful port\n", .{ c.s(.green), c.s(.reset), u.manifest.name });
     } else {
         c.print("{s}NOT DONE{s}: {d} check(s) did not pass\n", .{ c.s(.red), c.s(.reset), failed });
     }
@@ -155,8 +159,8 @@ fn inspect(c: *cli.Ctx, dir: []const u8) ?UnitStatus {
     const a = c.arena;
     const text = Io.Dir.cwd().readFileAlloc(c.io, std.fs.path.join(a, &.{ dir, unit_mod.manifest_name }) catch return null, a, .limited(1 << 20)) catch return null;
     const m = json.parseFromSliceLeaky(unit_mod.Manifest, a, text, .{ .allocate = .alloc_always, .ignore_unknown_fields = true }) catch return null;
-    var s: UnitStatus = .{ .name = m.name, .dir = c.rel(dir), .language = @tagName(m.language), .cases = 0, .state = "" };
-    const port_path = std.fs.path.join(a, &.{ dir, "src", "port.zig" }) catch return null;
+    var s: UnitStatus = .{ .name = m.name, .dir = c.rel(dir), .language = if (m.kind == .cli) "cli" else @tagName(m.lang_()), .cases = 0, .state = "" };
+    const port_path = std.fs.path.join(a, &.{ dir, "src", if (m.kind == .cli) "main.zig" else "port.zig" }) catch return null;
     const cases_path = std.fs.path.join(a, &.{ dir, unit_mod.cases_name }) catch return null;
     const diff_path = std.fs.path.join(a, &.{ dir, unit_mod.work_dir, "last-diff.json" }) catch return null;
     const port_text = Io.Dir.cwd().readFileAlloc(c.io, port_path, a, .limited(16 << 20)) catch "";

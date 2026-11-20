@@ -143,6 +143,10 @@ fn compile(c: *cli.Ctx, u: unit_mod.Unit, js: bool, mode: unit_mod.Optimize) cli
 pub fn run(c: *cli.Ctx, args: cli.Parsed) !u8 {
     const u = try unit_mod.load(c, args.pos(0));
     const m = u.manifest;
+    if (u.isCli()) {
+        c.hint("a ported program is already standalone: {s}/zig-out/bin/port", .{c.rel(u.dir)});
+        return c.fail("bridge is for function units", .{});
+    }
     if (unit_mod.portIsStub(c, u)) {
         c.hint("finish the port first; `zig-anything gate {s}` shows what is left", .{c.rel(u.dir)});
         return c.fail("src/port.zig still has the {s} marker", .{unit_mod.todo_marker});
@@ -151,7 +155,7 @@ pub fn run(c: *cli.Ctx, args: cli.Parsed) !u8 {
         unit_mod.Optimize.parse(v) orelse return c.fail("--optimize must be debug, safe, fast or small (got '{s}')", .{v})
     else
         .fast;
-    const js = m.language.isJs();
+    const js = m.lang_().isJs();
 
     try unit_mod.refreshRuntime(c, u);
     try writeFile(c, u.path(c.arena, "src/bridge.zig"), renderBridgeZig(c.arena, m.function) catch return c.fail("out of memory", .{}));

@@ -27,23 +27,52 @@ pub const todo_marker = "TODO(zig-anything)";
 const rt_source = @embedFile("assets/rt.zig");
 const build_template = @embedFile("assets/unit_build.zig");
 
+pub const Kind = enum {
+    /// One function, called in-process with JSON arguments.
+    function,
+    /// A whole command-line program: arguments + stdin in, stdout + exit code out.
+    cli,
+};
+
 pub const Manifest = struct {
     schema: u32 = 1,
+    kind: Kind = .function,
     name: []const u8,
-    language: lang.Language,
+    // ---- function units
+    language: ?lang.Language = null,
     /// Source file, relative to the unit directory, `/`-separated.
-    source: []const u8,
-    function: []const u8,
-    params: []const lang.Param,
+    source: []const u8 = "",
+    function: []const u8 = "",
+    params: []const lang.Param = &.{},
     returns: ?lang.ParamType = null,
     is_async: bool = false,
+    // ---- cli units
+    /// The original program and any leading arguments.
+    command: []const []const u8 = &.{},
+    /// Working directory for both programs, relative to the unit directory.
+    cwd: []const u8 = ".",
+
+    pub fn lang_(m: Manifest) lang.Language {
+        return m.language orelse .javascript;
+    }
 };
 
 pub const Unit = struct {
     dir: []const u8,
     manifest: Manifest,
     source_abs: []const u8,
+    /// cli units: absolute working directory for both programs.
+    cwd_abs: []const u8,
     cfg: config.Loaded,
+
+    pub fn isCli(u: Unit) bool {
+        return u.manifest.kind == .cli;
+    }
+
+    /// The file the user writes: src/port.zig or, for programs, src/main.zig.
+    pub fn portFile(u: Unit) []const u8 {
+        return if (u.isCli()) "src/main.zig" else "src/port.zig";
+    }
 
     pub fn path(u: Unit, a: Allocator, rel: []const u8) []const u8 {
         return std.fs.path.join(a, &.{ u.dir, rel }) catch rel;
@@ -63,7 +92,7 @@ pub const Unit = struct {
     }
 };
 
-fn exists(c: *cli.Ctx, p: []const u8) bool {
+pub fn exists(c: *cli.Ctx, p: []const u8) bool {
     Io.Dir.cwd().access(c.io, p, .{}) catch return false;
     return true;
 }
@@ -91,11 +120,18 @@ pub fn load(c: *cli.Ctx, arg: ?[]const u8) cli.Reported!Unit {
     const m = std.json.parseFromSliceLeaky(Manifest, c.arena, text, .{ .allocate = .alloc_always, .ignore_unknown_fields = true }) catch |err|
         return c.fail("{s} is not a valid unit manifest ({s})", .{ c.rel(manifest_path), @errorName(err) });
     if (m.schema != 1) return c.fail("{s}: unsupported schema {d}; upgrade zig-anything", .{ c.rel(manifest_path), m.schema });
+    switch (m.kind) {
+        .function => if (m.language == null or m.function.len == 0 or m.source.len == 0)
+            return c.fail("{s}: function units need \"language\", \"source\" and \"function\"", .{c.rel(manifest_path)}),
+        .cli => if (m.command.len == 0)
+            return c.fail("{s}: cli units need a non-empty \"command\"", .{c.rel(manifest_path)}),
+    }
     const source_abs = std.fs.path.resolveAlloc(c.arena, &.{ dir, m.source }) catch return c.fail("out of memory", .{});
-    return .{ .dir = dir, .manifest = m, .source_abs = source_abs, .cfg = try config.load(c, dir) };
+    const cwd_abs = std.fs.path.resolveAlloc(c.arena, &.{ dir, m.cwd }) catch return c.fail("out of memory", .{});
+    return .{ .dir = dir, .manifest = m, .source_abs = source_abs, .cwd_abs = cwd_abs, .cfg = try config.load(c, dir) };
 }
 
-fn writeFile(c: *cli.Ctx, p: []const u8, data: []const u8) cli.Reported!void {
+pub fn writeFile(c: *cli.Ctx, p: []const u8, data: []const u8) cli.Reported!void {
     if (std.fs.path.dirname(p)) |d| Io.Dir.cwd().createDirPath(c.io, d) catch {};
     Io.Dir.cwd().writeFile(c.io, .{ .sub_path = p, .data = data }) catch |err|
         return c.fail("cannot write {s}: {s}", .{ p, @errorName(err) });
@@ -180,7 +216,7 @@ pub fn scaffold(c: *cli.Ctx, o: ScaffoldOptions) cli.Reported!struct { port_crea
         c.hint("pass --force to regenerate its manifest and harness (your port.zig is kept)", .{});
         return c.fail("a unit already exists at {s}", .{c.rel(o.dir)});
     }
-    const manifest_json = std.json.Stringify.valueAlloc(a, o.manifest, .{ .whitespace = .indent_2 }) catch return c.fail("out of memory", .{});
+    const manifest_json = std.json.Stringify.valueAlloc(a, o.manifest, .{ .whitespace = .indent_2, .emit_null_optional_fields = false }) catch return c.fail("out of memory", .{});
     try writeFile(c, manifest_path, std.mem.concat(a, u8, &.{ manifest_json, "\n" }) catch return c.fail("out of memory", .{}));
 
     const j = struct {
@@ -222,6 +258,7 @@ pub const Optimize = enum {
 /// Rewrites the unit's generated runtime when it differs from the version
 /// embedded in this binary, so upgrading zig-anything upgrades every unit.
 pub fn refreshRuntime(c: *cli.Ctx, u: Unit) cli.Reported!void {
+    if (u.isCli()) return; // programs have no generated runtime
     const p = u.path(c.arena, "src/rt.zig");
     const current = Io.Dir.cwd().readFileAlloc(c.io, p, c.arena, .limited(4 << 20)) catch "";
     if (std.mem.eql(u8, current, rt_source)) return;
@@ -254,7 +291,7 @@ pub fn build(c: *cli.Ctx, u: Unit, optimize: Optimize, prefix: []const u8, step:
 
 /// True when the port still carries the scaffold's TODO marker.
 pub fn portIsStub(c: *cli.Ctx, u: Unit) bool {
-    const text = Io.Dir.cwd().readFileAlloc(c.io, u.path(c.arena, "src/port.zig"), c.arena, .limited(16 << 20)) catch return true;
+    const text = Io.Dir.cwd().readFileAlloc(c.io, u.path(c.arena, u.portFile()), c.arena, .limited(16 << 20)) catch return true;
     return std.mem.indexOf(u8, text, todo_marker) != null;
 }
 
