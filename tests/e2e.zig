@@ -242,6 +242,15 @@ fn regressions(c: *Ctx) !void {
     };
     check(c, "status lists passing units", r.code == 0 and passing >= 2, r);
 
+    r = try cli(c, c.work, &.{ "profile", "js/app.mjs" });
+    expect(c, "profile ranks JavaScript hot spots", r, 0, "next: zig-anything init");
+    check(c, "profile finds slugify and marks it portable", std.mem.indexOf(u8, r.out, "slugify") != null and std.mem.indexOf(u8, r.out, "portable") != null, r);
+    r = try cli(c, c.work, &.{ "profile", "py/app.py", "--json" });
+    const prof_json = std.json.parseFromSliceLeaky(std.json.Value, c.a, std.mem.trim(u8, r.out, " \r\n"), .{}) catch null;
+    check(c, "profile --json ranks Python hot spots", r.code == 0 and prof_json != null and std.mem.indexOf(u8, r.out, "digit_sum") != null, r);
+    r = try cli(c, c.work, &.{ "profile", "nope.rb" });
+    expect(c, "profile rejects unsupported scripts", r, 3, "supported scripts");
+
     r = try cli(c, c.work, &.{"--version"});
     expect(c, "--version", r, 0, "zig-anything ");
     r = try cli(c, c.work, &.{ "help", "diff" });
@@ -307,7 +316,7 @@ fn mcp(c: *Ctx) !void {
     }
     check(c, "every response is JSON", all_valid, .{ .code = 0, .out = out });
     check(c, "initialize answered", ids[1], .{ .code = 0, .out = out });
-    check(c, "tools/list returns 10 tools", tool_count == 10, .{ .code = 0, .out = out });
+    check(c, "tools/list returns 11 tools", tool_count == 11, .{ .code = 0, .out = out });
     check(c, "tools/call runs a command", status_ok, .{ .code = 0, .out = out });
     check(c, "missing tool arguments are tool errors", diff_is_error, .{ .code = 0, .out = out });
     check(c, "unknown methods are rejected", method_not_found, .{ .code = 0, .out = out });

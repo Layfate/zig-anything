@@ -13,9 +13,9 @@ from PIL import Image, ImageDraw, ImageFont
 
 # ---- measured data (examples/levenshtein-py, `zig-anything bench levenshtein`)
 CASES = 253
-ORIGINAL_MS = 162.8  # one process, every case once
-PORT_MS = 17.9
-PER_CALL_SPEEDUP = 159  # 51.9 us -> 0.33 us per call
+ORIGINAL_MS = 134.6  # one process, every case once
+PORT_MS = 6.5
+PER_CALL_SPEEDUP = 164  # 51.1 us -> 0.31 us per call
 SLOWDOWN = 10  # animation plays 10x slower than real time
 
 # ---- look

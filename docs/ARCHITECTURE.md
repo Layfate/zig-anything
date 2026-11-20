@@ -1,10 +1,10 @@
 # Architecture
 
-ZigAnything is a single Zig executable with no dependencies outside the standard library. This document explains how the pieces fit and why they were built this way.
+zig-anything is a single Zig executable with no dependencies outside the standard library. This document explains how the pieces fit and why they were built this way.
 
 ## Design goals
 
-1. **Prove behavior, don't translate code.** ZigAnything never rewrites source. It captures what the original *does* and checks that the port does the same.
+1. **Prove behavior, don't translate code.** zig-anything never rewrites source. It captures what the original *does* and checks that the port does the same.
 2. **Stay small and fast to start.** The CLI is run in tight edit, diff, edit loops. It is one static binary of under 1 MB that starts in a few milliseconds.
 3. **Keep runtimes apart.** The original runs in its own runtime and the port runs natively. They exchange JSON lines through files, so neither side needs FFI bindings, and a crash on one side cannot corrupt the other.
 4. **Be explicit about memory.** Each command owns a process-lifetime arena for its bookkeeping. Large buffers come from the general-purpose allocator and are freed explicitly. Ports get a per-call arena that is reset after every call.
@@ -59,6 +59,12 @@ Types are resolved in priority order: annotation, then default value literal, th
 ### Building
 
 `unit.build` shells out to `zig build -Doptimize=<mode> --prefix <dir>` inside the unit directory. `diff` and `gate` use `safe`, which keeps safety checks so that out-of-bounds access and integer overflow in a port become crashes instead of silent wrong answers. `bench` builds `fast` into a separate prefix (`zig-out-fast`), so it never invalidates the diff build.
+
+### Bridge, program units and profiling
+
+- `bridge` writes `src/bridge.zig`, which exports `za_alloc`, `za_free`, `za_call` and `za_call_batch` through `rt.Bridge`. JS/TS units compile it for `wasm32-freestanding`; Python units compile it as a shared library. The generated `index.mjs` / `port.py` marshal arguments as JSON. Every recorded case is then replayed through the binding with the normal recorder.
+- Program units (`kind: "cli"` in `unit.json`) store a command and a working directory. Cases are invocations (`args` plus optional `stdin`); `cmd/program.zig` runs the original and the built `port` executable and compares stdout and exit code.
+- `profile` runs `node --cpu-prof` and aggregates the `.cpuprofile` (inclusive time counts each sample once per function, so recursion is not double counted), or runs an embedded `cProfile` helper for Python. Results are cross-referenced with the scanner to mark portable functions.
 
 ## Error handling
 

@@ -18,5 +18,5 @@ Measured with `zig-anything bench levenshtein` on a Ryzen 7 5700X, Windows 11, P
 
 | | Python | Zig port |
 | --- | --- | --- |
-| per call | 51.9 µs | 0.33 µs (159x) |
-| one process, all 253 cases | 162.8 ms | 17.9 ms (9.1x) |
+| per call | 51.1 µs | 0.31 µs (164x) |
+| one process, all 253 cases | 134.6 ms | 6.5 ms (20.8x) |

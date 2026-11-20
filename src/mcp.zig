@@ -35,6 +35,11 @@ const Tool = struct {
 const unit_arg: Arg = .{ .prop = "unit", .required = true, .help = "Unit directory, or unit name inside the configured units directory" };
 
 const tools = [_]Tool{
+    .{ .name = "zig_anything_profile", .command = "profile", .description = "Run a JS/TS/Python script under its runtime's profiler and rank the functions in the project by time, marking which ones can be ported.", .args = &.{
+        .{ .prop = "script", .required = true, .help = "Script to run" },
+        .{ .prop = "args", .kind = .array, .help = "Arguments for the script" },
+        .{ .prop = "top", .flag = "--top", .kind = .number, .help = "Functions to show" },
+    } },
     .{ .name = "zig_anything_scan", .command = "scan", .description = "List top-level functions (with inferred parameter types) in a JS/TS/Python file or project that can be ported to Zig.", .args = &.{
         .{ .prop = "path", .help = "File or directory to scan (default: current directory)" },
         .{ .prop = "all", .flag = "--all", .kind = .boolean, .help = "Include functions that are not exported" },

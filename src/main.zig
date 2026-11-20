@@ -14,6 +14,7 @@ const bench_cmd = @import("cmd/bench.zig");
 const gate_cmd = @import("cmd/gate.zig");
 const bridge_cmd = @import("cmd/bridge.zig");
 const program_cmd = @import("cmd/program.zig");
+const profile_cmd = @import("cmd/profile.zig");
 const mcp = @import("mcp.zig");
 const Io = std.Io;
 
@@ -33,6 +34,7 @@ fn runMcp(c: *cli.Ctx, args: cli.Parsed) anyerror!u8 {
 }
 
 const commands = [_]Command{
+    .{ .name = "profile", .usage = "profile <script> [-- args]", .summary = "find the functions worth porting first", .flags = &profile_cmd.flags, .run = profile_cmd.run },
     .{ .name = "scan", .usage = "scan [path]", .summary = "list portable functions and their inferred types", .flags = &scan_cmd.scan_flags, .run = scan_cmd.runScan },
     .{ .name = "init", .usage = "init <source-file> <function>", .summary = "create a port unit (manifest, Zig stub, harness)", .flags = &scan_cmd.init_flags, .run = scan_cmd.runInit },
     .{ .name = "init-cli", .usage = "init-cli <name> -- <command...>", .summary = "create a program unit for a whole command-line program", .flags = &program_cmd.init_flags, .run = program_cmd.runInit },
@@ -64,6 +66,7 @@ fn printMainHelp(c: *cli.Ctx) void {
         \\  {s: <32} {s}
         \\
         \\{s}workflow:{s}
+        \\  zig-anything profile src/app.mjs          find what is hot
         \\  zig-anything scan src/                    find candidates
         \\  zig-anything init src/text.ts slugify     scaffold zig-port/slugify
         \\  zig-anything record slugify               record the original's behavior
@@ -247,4 +250,5 @@ test {
     _ = @import("cmd/bench.zig");
     _ = @import("cmd/bridge.zig");
     _ = @import("cmd/program.zig");
+    _ = @import("cmd/profile.zig");
 }

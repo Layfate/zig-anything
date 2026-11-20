@@ -1,4 +1,4 @@
-# Contributing to ZigAnything
+# Contributing to zig-anything
 
 Thanks for helping! This guide covers the development loop and the bar a change needs to clear.
 
