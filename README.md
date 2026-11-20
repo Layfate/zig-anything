@@ -208,6 +208,12 @@ Inferred types map like this: `number` → `f64`, `int` → `i64`, `string` → 
 
 ## Benchmarks
 
+<p align="center">
+  <img src="docs/assets/bars.gif" alt="fuzzyScore, JavaScript vs Zig port: peak memory 47.2 MB vs 4.1 MB, one process over 288 cases 40.7 ms vs 5.6 ms, per call 61.3 ns vs 31.6 ns" width="880">
+  <br>
+  <sub>Memory and one-process time: <code>python bench/peakmem.py --runs 15 -- &lt;command&gt;</code>, running the recorder and the Zig harness directly. Per call: <code>zig-anything bench fuzzyScore</code>. Regenerate with <code>python scripts/make_bars_gif.py</code>.</sub>
+</p>
+
 All numbers below were measured on one machine: AMD Ryzen 7 5700X, 32 GB RAM, Windows 11, Zig 0.17.1, Node.js 24.21, Python 3.12.10. Each row is a median of 5 runs. Reproduce them with the commands shown; your numbers will differ.
 
 **Example ports** (`zig-anything bench <unit>`):
@@ -227,6 +233,7 @@ A JIT is a strong baseline. The first `fuzzyScore` port matched every case but r
 | --- | --- | --- |
 | binary size, size-optimized, x86_64 Linux / macOS / Windows | 462 KB / 438 KB / 768 KB | `zig build release` |
 | startup, `zig-anything --version` (Windows, includes process creation) | 4.0 ms median | `python bench/startup.py -- zig-out/bin/zig-anything --version` |
+| peak memory of a port harness running 288 cases (`fuzzyScore`) | 4.1 MB, vs 47.2 MB for Node running the original | `python bench/peakmem.py -- <command>` |
 | scan JavaScript | 137 MiB/s | `zig build microbench` |
 | scan Python | 200 MiB/s | `zig build microbench` |
 | parse and compare 100,000 recorded cases | 228 ms (70 MiB/s) | `zig build microbench` |
