@@ -1,0 +1,8 @@
+zig-out/
+zig-out-fast/
+.zig-cache/
+.za/
+*.exe
+*.pdb
+__pycache__/
+node_modules/
