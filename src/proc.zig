@@ -32,6 +32,9 @@ pub fn run(c: *cli.Ctx, argv: []const []const u8, opts: Options) cli.Reported!Re
         .argv = argv,
         .cwd = if (opts.cwd) |d| .{ .path = d } else .inherit,
         .environ_map = opts.environ_map,
+        // The default (true) makes Windows start a hidden console host for
+        // every child, which costs ~9 ms per process and skews `bench`.
+        .create_no_window = false,
         .timeout = if (opts.timeout_s == 0) .none else .{ .duration = .{
             .raw = .fromSeconds(opts.timeout_s),
             .clock = .awake,

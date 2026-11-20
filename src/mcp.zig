@@ -256,7 +256,7 @@ pub fn serve(c: *cli.Ctx, version: []const u8) !u8 {
                 try sendToolText(w, req_id, err_msg, true);
                 continue;
             };
-            const result = std.process.run(a, io, .{ .argv = argv }) catch |err| {
+            const result = std.process.run(a, io, .{ .argv = argv, .create_no_window = false }) catch |err| {
                 try sendToolText(w, req_id, @errorName(err), true);
                 continue;
             };

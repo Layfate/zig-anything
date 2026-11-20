@@ -26,7 +26,7 @@ fn cli(c: *Ctx, cwd: []const u8, args: []const []const u8) !Result {
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.appendSlice(c.a, &.{ c.exe, "--no-color" });
     try argv.appendSlice(c.a, args);
-    const r = try std.process.run(c.a, c.io, .{ .argv = argv.items, .cwd = .{ .path = cwd } });
+    const r = try std.process.run(c.a, c.io, .{ .argv = argv.items, .cwd = .{ .path = cwd }, .create_no_window = false });
     const code: u8 = switch (r.term) {
         .exited => |x| x,
         else => 255,
