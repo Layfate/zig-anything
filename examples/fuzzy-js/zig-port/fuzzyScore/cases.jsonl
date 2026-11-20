@@ -1,0 +1,288 @@
+{"id":1,"args":["fb","foo bar"],"expect":{"ok":0.875}}
+{"id":2,"args":["fb","afoobar"],"expect":{"ok":0.375}}
+{"id":3,"args":["FB","foo bar"],"expect":{"ok":0.75}}
+{"id":4,"args":["foo","foo"],"expect":{"ok":0.704}}
+{"id":5,"args":["foo","Foo"],"expect":{"ok":0.667}}
+{"id":6,"args":["abc","a-b-c"],"expect":{"ok":0.778}}
+{"id":7,"args":["abc","a_b_c"],"expect":{"ok":0.778}}
+{"id":8,"args":["abc","a/b.c"],"expect":{"ok":0.778}}
+{"id":9,"args":["abc","xxabcxx"],"expect":{"ok":0.556}}
+{"id":10,"args":["abc","axbxcx"],"expect":{"ok":0.481}}
+{"id":11,"args":["zig","zig-anything"],"expect":{"ok":0.704}}
+{"id":12,"args":["za","zig-anything"],"expect":{"ok":0.875}}
+{"id":13,"args":["any","zig-anything"],"expect":{"ok":0.704}}
+{"id":14,"args":["test","the test case"],"expect":{"ok":0.45}}
+{"id":15,"args":["tc","the test case"],"expect":{"ok":0.875}}
+{"id":16,"args":["ttc","the test case"],"expect":{"ok":0.778}}
+{"id":17,"args":["read","README.md"],"expect":{"ok":0.6}}
+{"id":18,"args":["rdm","README.md"],"expect":{"ok":0.444}}
+{"id":19,"args":["src","src/main.zig"],"expect":{"ok":0.704}}
+{"id":20,"args":["mz","src/main.zig"],"expect":{"ok":0.875}}
+{"id":21,"args":["ok","emoji 🎉 ok"],"expect":{"ok":0.375}}
+{"id":22,"args":["🎉","emoji 🎉 ok"],"expect":{"ok":0.75}}
+{"id":23,"args":["eo","emoji 🎉 ok"],"expect":{"ok":0.625}}
+{"id":24,"args":["日本","日本語テキスト"],"expect":{"ok":0.75}}
+{"id":25,"args":["ü","ünïcödé"],"expect":{"ok":1}}
+{"id":26,"args":["a","aaaa"],"expect":{"ok":1}}
+{"id":27,"args":["aa","aaaa"],"expect":{"ok":0.75}}
+{"id":28,"args":["aaaa","aaaa"],"expect":{"ok":0.7}}
+{"id":29,"args":["aaaaa","aaaa"],"expect":{"ok":0}}
+{"id":30,"args":["hello world","hello world"],"expect":{"ok":0.807}}
+{"id":31,"args":["hw","hello world"],"expect":{"ok":0.875}}
+{"id":32,"args":["HW","Hello World"],"expect":{"ok":0.875}}
+{"id":33,"args":["qbf","The quick brown fox jumps over the lazy dog"],"expect":{"ok":0.778}}
+{"id":34,"args":["lazy","The quick brown fox jumps over the lazy dog"],"expect":{"ok":0.7}}
+{"id":35,"args":["xyz","The quick brown fox jumps over the lazy dog"],"expect":{"ok":0}}
+{"id":36,"args":["hello world","hello world"],"expect":{"ok":0.807}}
+{"id":37,"args":["","hello world"],"expect":{"ok":1}}
+{"id":38,"args":["a","hello world"],"expect":{"ok":0}}
+{"id":39,"args":[" ","hello world"],"expect":{"ok":0.429}}
+{"id":40,"args":["  padded  ","hello world"],"expect":{"ok":0}}
+{"id":41,"args":["Hello, World!","hello world"],"expect":{"ok":0}}
+{"id":42,"args":["UPPER lower","hello world"],"expect":{"ok":0}}
+{"id":43,"args":["line1\nline2","hello world"],"expect":{"ok":0}}
+{"id":44,"args":["tab\tsep","hello world"],"expect":{"ok":0}}
+{"id":45,"args":["ünïcödé","hello world"],"expect":{"ok":0}}
+{"id":46,"args":["日本語テキスト","hello world"],"expect":{"ok":0}}
+{"id":47,"args":["emoji 🎉 ok","hello world"],"expect":{"ok":0}}
+{"id":48,"args":["a,b,c","hello world"],"expect":{"ok":0}}
+{"id":49,"args":["0","hello world"],"expect":{"ok":0}}
+{"id":50,"args":["-1","hello world"],"expect":{"ok":0}}
+{"id":51,"args":["3.14","hello world"],"expect":{"ok":0}}
+{"id":52,"args":["null","hello world"],"expect":{"ok":0}}
+{"id":53,"args":["racecar","hello world"],"expect":{"ok":0}}
+{"id":54,"args":["aaaa","hello world"],"expect":{"ok":0}}
+{"id":55,"args":["The quick brown fox jumps over the lazy dog","hello world"],"expect":{"ok":0}}
+{"id":56,"args":["abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij","hello world"],"expect":{"ok":0}}
+{"id":57,"args":["camelCaseString","hello world"],"expect":{"ok":0}}
+{"id":58,"args":["snake_case_string","hello world"],"expect":{"ok":0}}
+{"id":59,"args":["--dash--","hello world"],"expect":{"ok":0}}
+{"id":60,"args":["<b>&amp;</b>","hello world"],"expect":{"ok":0}}
+{"id":61,"args":["back\\slash","hello world"],"expect":{"ok":0}}
+{"id":62,"args":["quote\"d","hello world"],"expect":{"ok":0}}
+{"id":63,"args":["hello world",""],"expect":{"ok":0}}
+{"id":64,"args":["hello world","a"],"expect":{"ok":0}}
+{"id":65,"args":["hello world"," "],"expect":{"ok":0}}
+{"id":66,"args":["hello world","  padded  "],"expect":{"ok":0}}
+{"id":67,"args":["hello world","Hello, World!"],"expect":{"ok":0.476}}
+{"id":68,"args":["hello world","UPPER lower"],"expect":{"ok":0}}
+{"id":69,"args":["hello world","line1\nline2"],"expect":{"ok":0}}
+{"id":70,"args":["hello world","tab\tsep"],"expect":{"ok":0}}
+{"id":71,"args":["hello world","ünïcödé"],"expect":{"ok":0}}
+{"id":72,"args":["hello world","日本語テキスト"],"expect":{"ok":0}}
+{"id":73,"args":["hello world","emoji 🎉 ok"],"expect":{"ok":0}}
+{"id":74,"args":["hello world","a,b,c"],"expect":{"ok":0}}
+{"id":75,"args":["hello world","0"],"expect":{"ok":0}}
+{"id":76,"args":["hello world","-1"],"expect":{"ok":0}}
+{"id":77,"args":["hello world","3.14"],"expect":{"ok":0}}
+{"id":78,"args":["hello world","null"],"expect":{"ok":0}}
+{"id":79,"args":["hello world","racecar"],"expect":{"ok":0}}
+{"id":80,"args":["hello world","aaaa"],"expect":{"ok":0}}
+{"id":81,"args":["hello world","The quick brown fox jumps over the lazy dog"],"expect":{"ok":0}}
+{"id":82,"args":["hello world","abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij"],"expect":{"ok":0}}
+{"id":83,"args":["hello world","camelCaseString"],"expect":{"ok":0}}
+{"id":84,"args":["hello world","snake_case_string"],"expect":{"ok":0}}
+{"id":85,"args":["hello world","--dash--"],"expect":{"ok":0}}
+{"id":86,"args":["hello world","<b>&amp;</b>"],"expect":{"ok":0}}
+{"id":87,"args":["hello world","back\\slash"],"expect":{"ok":0}}
+{"id":88,"args":["hello world","quote\"d"],"expect":{"ok":0}}
+{"id":89,"args":["abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij","R中jzClIUñES!1VTx1Y"],"expect":{"ok":0}}
+{"id":90,"args":["6RoePlJtgHA ","NEsPikQrNtnzS9qf"],"expect":{"ok":0}}
+{"id":91,"args":["camelCaseString","-yL中x9oTtQ_sH,l !v"],"expect":{"ok":0}}
+{"id":92,"args":["日本語テキスト","b中dv"],"expect":{"ok":0}}
+{"id":93,"args":["J","TAmaOe"],"expect":{"ok":0}}
+{"id":94,"args":["Z-oñΩgupT0jt7 dΩvu","!cGuN"],"expect":{"ok":0}}
+{"id":95,"args":["abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij","ñrMMDG-PT"],"expect":{"ok":0}}
+{"id":96,"args":["quote\"d","日本語テキスト"],"expect":{"ok":0}}
+{"id":97,"args":["-1","a,b,c"],"expect":{"ok":0}}
+{"id":98,"args":["日本語テキスト","a,b,c"],"expect":{"ok":0}}
+{"id":99,"args":["Vyoldd9Eé🎉,CL?cUpvwn--","line1\nline2"],"expect":{"ok":0}}
+{"id":100,"args":["g4jK,m E.ñ !HNl","-1"],"expect":{"ok":0}}
+{"id":101,"args":["racecar"," Z"],"expect":{"ok":0}}
+{"id":102,"args":["","a,b,c"],"expect":{"ok":1}}
+{"id":103,"args":["<b>&amp;</b>","!32bO767,"],"expect":{"ok":0}}
+{"id":104,"args":["<b>&amp;</b>","JO XT uIA"],"expect":{"ok":0}}
+{"id":105,"args":[".E9fHV_i","z l3pgXDZ_4Ew"],"expect":{"ok":0}}
+{"id":106,"args":["Hello, World!","UPPER lower"],"expect":{"ok":0}}
+{"id":107,"args":["k,TFOb5rKz bG de_?vwO","abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij"],"expect":{"ok":0}}
+{"id":108,"args":["UPPER lower","The quick brown fox jumps over the lazy dog"],"expect":{"ok":0}}
+{"id":109,"args":["null","Hello, World!"],"expect":{"ok":0}}
+{"id":110,"args":["C0","snake_case_string"],"expect":{"ok":0}}
+{"id":111,"args":["aaaa","aaaa"],"expect":{"ok":0.7}}
+{"id":112,"args":["ms","line1\nline2"],"expect":{"ok":0}}
+{"id":113,"args":["Gg.PJ yT04VS  I7ha","7dJ .rb 1GD,ék7ΩEh"],"expect":{"ok":0}}
+{"id":114,"args":["UPPER lower","abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij"],"expect":{"ok":0}}
+{"id":115,"args":["lLC_QxdFjc中","OimljGΩi中,ß"],"expect":{"ok":0}}
+{"id":116,"args":["The quick brown fox jumps over the lazy dog","-1"],"expect":{"ok":0}}
+{"id":117,"args":["🎉FRyw-1","UPPER lower"],"expect":{"ok":0}}
+{"id":118,"args":["PAaovlH4T","Hello, World!"],"expect":{"ok":0}}
+{"id":119,"args":["-1",""],"expect":{"ok":0}}
+{"id":120,"args":["a","ünïcödé"],"expect":{"ok":0}}
+{"id":121,"args":["11QYr,nfYжUyA3",""],"expect":{"ok":0}}
+{"id":122,"args":["UPPER lower","Gmx_MΩEcS4bßnyqm"],"expect":{"ok":0}}
+{"id":123,"args":["line1\nline2","3.14"],"expect":{"ok":0}}
+{"id":124,"args":["6KD 2 ZyT.6f2r diY5","84qrW9nhq,"],"expect":{"ok":0}}
+{"id":125,"args":["quote\"d","PXhOeJ21"],"expect":{"ok":0}}
+{"id":126,"args":[" жU3jdhBw"," 5ß- 19"],"expect":{"ok":0}}
+{"id":127,"args":["  7rkCW3ΩLB","emoji 🎉 ok"],"expect":{"ok":0}}
+{"id":128,"args":["back\\slash","aaaa"],"expect":{"ok":0}}
+{"id":129,"args":["null","2Bagg4 UJryßzRññZ"],"expect":{"ok":0}}
+{"id":130,"args":["🎉 7 5h ñuw"," 72Yß- PGnQIA中K"],"expect":{"ok":0}}
+{"id":131,"args":["日本語テキスト","quote\"d"],"expect":{"ok":0}}
+{"id":132,"args":["camelCaseString","-1"],"expect":{"ok":0}}
+{"id":133,"args":["ünïcödé","null"],"expect":{"ok":0}}
+{"id":134,"args":["zovжn3KaYжY. 4 ","back\\slash"],"expect":{"ok":0}}
+{"id":135,"args":["","lz"],"expect":{"ok":1}}
+{"id":136,"args":["v6r PdBx","Ω Pjs!ж3ñ x16f"],"expect":{"ok":0}}
+{"id":137,"args":["JPd3NMvmFUMT Etx🎉TXiR","PY?🎉,cJ i"],"expect":{"ok":0}}
+{"id":138,"args":["camelCaseString","日本語テキスト"],"expect":{"ok":0}}
+{"id":139,"args":["EJ GVPP8 ","QgUhW .yq🎉ru,7J2K"],"expect":{"ok":0}}
+{"id":140,"args":[" TTjVd5p9.5UgVfo9ZT","zOf?中éy,é4F7HGDZr84uej n"],"expect":{"ok":0}}
+{"id":141,"args":["racecar","abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij"],"expect":{"ok":0}}
+{"id":142,"args":["ünïcödé","a,b,c"],"expect":{"ok":0}}
+{"id":143,"args":["5K4i5,L71 -Sgi","<b>&amp;</b>"],"expect":{"ok":0}}
+{"id":144,"args":["-yyZ!_l?V0J9sla","C-lsE2shx6pX"],"expect":{"ok":0}}
+{"id":145,"args":["abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij","<b>&amp;</b>"],"expect":{"ok":0}}
+{"id":146,"args":["camelCaseString","camelCaseString"],"expect":{"ok":0.822}}
+{"id":147,"args":["3.14","3.14"],"expect":{"ok":0.8}}
+{"id":148,"args":["b8","3.14"],"expect":{"ok":0}}
+{"id":149,"args":["dAfcMn5CLzU eB7","-1"],"expect":{"ok":0}}
+{"id":150,"args":["qsCC81mGVQf5F","3.14"],"expect":{"ok":0}}
+{"id":151,"args":["5?EICd,CdOx XS ","--dash--"],"expect":{"ok":0}}
+{"id":152,"args":["UPPER lower"," "],"expect":{"ok":0}}
+{"id":153,"args":["201.hj uHYR9-4KR6 éM","UPPER lower"],"expect":{"ok":0}}
+{"id":154,"args":["ünïcödé","  kXozb"],"expect":{"ok":0}}
+{"id":155,"args":["UPPER lower","a,b,c"],"expect":{"ok":0}}
+{"id":156,"args":["t9p,","Ye D pMWhΩt873xBsu"],"expect":{"ok":0}}
+{"id":157,"args":[" ","ß"],"expect":{"ok":0}}
+{"id":158,"args":[" l🎉uci2zfg"," zN0ß66va l-HñEbB th"],"expect":{"ok":0}}
+{"id":159,"args":["pFGks BRhbXAW","o,VñIGOpyN028_ew bZ,ñM"],"expect":{"ok":0}}
+{"id":160,"args":["yEaeéXn.XMye05ß!b ","  padded  "],"expect":{"ok":0}}
+{"id":161,"args":["4X9T!p","f?M7gvw"],"expect":{"ok":0}}
+{"id":162,"args":["AX4 C","YZzsASXjWB2 42Iñ5"],"expect":{"ok":0}}
+{"id":163,"args":["dJCrжRA7E!WFV","K é🎉ctpj8qnSF7ßñ8jRa"],"expect":{"ok":0}}
+{"id":164,"args":["abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij","uyDAñJcBu_Q"],"expect":{"ok":0}}
+{"id":165,"args":["line1\nline2","emoji 🎉 ok"],"expect":{"ok":0}}
+{"id":166,"args":["<b>&amp;</b>","tab\tsep"],"expect":{"ok":0}}
+{"id":167,"args":["uhUZs ?Pbf-7hsF5Noc","hello world"],"expect":{"ok":0}}
+{"id":168,"args":["_1m9g,ayVgU8LDM","line1\nline2"],"expect":{"ok":0}}
+{"id":169,"args":[" BZy7?knU7z  ","back\\slash"],"expect":{"ok":0}}
+{"id":170,"args":["iVFJH3EfZN64","tab\tsep"],"expect":{"ok":0}}
+{"id":171,"args":["B4l 5 -,OIéAlqR","ldßp S5ER"],"expect":{"ok":0}}
+{"id":172,"args":["aaaa","emoji 🎉 ok"],"expect":{"ok":0}}
+{"id":173,"args":["中y🎉VXñI"," idpwy"],"expect":{"ok":0}}
+{"id":174,"args":["7-_ñWUh","g7 4 6D BmJ"],"expect":{"ok":0}}
+{"id":175,"args":["a,b,c","  -eJj!Cj.pQ   ?5uZ"],"expect":{"ok":0}}
+{"id":176,"args":[" ","Ud"],"expect":{"ok":0}}
+{"id":177,"args":["UPPER lower","1f"],"expect":{"ok":0}}
+{"id":178,"args":["3.14"," "],"expect":{"ok":0}}
+{"id":179,"args":["tab\tsep","ünïcödé"],"expect":{"ok":0}}
+{"id":180,"args":["Ce.3bMaEñqRv5ΩRsJpGYf?h","racecar"],"expect":{"ok":0}}
+{"id":181,"args":["racecar","bж8"],"expect":{"ok":0}}
+{"id":182,"args":["hzm8oVS","camelCaseString"],"expect":{"ok":0}}
+{"id":183,"args":["back\\slash",".qzq2I25eWVq.DWZBPg"],"expect":{"ok":0}}
+{"id":184,"args":["a,b,c","9é🎉sé2,0Uc"],"expect":{"ok":0}}
+{"id":185,"args":["The quick brown fox jumps over the lazy dog","中中-1L- 6 ж"],"expect":{"ok":0}}
+{"id":186,"args":["xe9xHPvz4!Ωj","null"],"expect":{"ok":0}}
+{"id":187,"args":["a,b,c","racecar"],"expect":{"ok":0}}
+{"id":188,"args":["0",""],"expect":{"ok":0}}
+{"id":189,"args":["line1\nline2","null"],"expect":{"ok":0}}
+{"id":190,"args":["dHaq--mUWdsMTlI","<b>&amp;</b>"],"expect":{"ok":0}}
+{"id":191,"args":["The quick brown fox jumps over the lazy dog","emoji 🎉 ok"],"expect":{"ok":0}}
+{"id":192,"args":["SQGx6O!pqAtjf7K🎉ñ6 6? 2","1B0ve8jBßo4eKWb8P9i1q"],"expect":{"ok":0}}
+{"id":193,"args":["жXkN","line1\nline2"],"expect":{"ok":0}}
+{"id":194,"args":["Hello, World!","Ω? rq Xeжñ0eeDPFжI"],"expect":{"ok":0}}
+{"id":195,"args":["z8ZgiB中4mCA0VéOW1Oed4EE","0"],"expect":{"ok":0}}
+{"id":196,"args":["8- ßCJ中q","Ng LWKhIW ?p🎉Dvp中1 "],"expect":{"ok":0}}
+{"id":197,"args":["<b>&amp;</b>","952ZiK_ uñfdß8cE5u.Ez"],"expect":{"ok":0}}
+{"id":198,"args":["ünïcödé","MTiTCE2rBj"],"expect":{"ok":0}}
+{"id":199,"args":["Z ,ox中dKT","a,b,c"],"expect":{"ok":0}}
+{"id":200,"args":["a,b,c","ßéD7yIIßtRkS4N9"],"expect":{"ok":0}}
+{"id":201,"args":["quote\"d","éO c"],"expect":{"ok":0}}
+{"id":202,"args":[" ","sAR6vjyжYß_P5xPrsoñ"],"expect":{"ok":0}}
+{"id":203,"args":["rYvd8C7o2s  HS","lx2D7y4a."],"expect":{"ok":0}}
+{"id":204,"args":["GGC4N -7fUhVxXQKr 22 R","dH?jжV3z zrOO!  B3z_l9Z"],"expect":{"ok":0}}
+{"id":205,"args":["bBN","X4QY7KCkh5BgBPtLj7of"],"expect":{"ok":0}}
+{"id":206,"args":["hNg.iP!O ti9ZaJqß","quote\"d"],"expect":{"ok":0}}
+{"id":207,"args":["hello world","lIK_中1 8hBmR.EzßGKE"],"expect":{"ok":0}}
+{"id":208,"args":["45NgHdX-mwqY,h_j3","KKOm"],"expect":{"ok":0}}
+{"id":209,"args":["日本語テキスト","aaaa"],"expect":{"ok":0}}
+{"id":210,"args":["003ж","日本語テキスト"],"expect":{"ok":0}}
+{"id":211,"args":["Qe3 .LaNm","cN中5xq4Tlx.nZp"],"expect":{"ok":0}}
+{"id":212,"args":["KX8J88No8c"," cHжxWRyry7rm."],"expect":{"ok":0}}
+{"id":213,"args":["vGBLh_RΩd_","quote\"d"],"expect":{"ok":0}}
+{"id":214,"args":["uQhI?9éVHIx zI0R2lS4Gah "," IN5d3fawaWW8sB1HI🎉kß6"],"expect":{"ok":0}}
+{"id":215,"args":["quote\"d","RfñygJRw1fFI Khhi dLEV"],"expect":{"ok":0}}
+{"id":216,"args":["3.14","tab\tsep"],"expect":{"ok":0}}
+{"id":217,"args":[" "," 3Rox🎉"],"expect":{"ok":1}}
+{"id":218,"args":["0","--dash--"],"expect":{"ok":0}}
+{"id":219,"args":["vt ","UPPER lower"],"expect":{"ok":0}}
+{"id":220,"args":["s","Ω2ér"],"expect":{"ok":0}}
+{"id":221,"args":["Hello, World!","🎉CΩAgHLDqgrUd  "],"expect":{"ok":0}}
+{"id":222,"args":["QIMjrpqW3Xq","-1"],"expect":{"ok":0}}
+{"id":223,"args":["2h","aaaa"],"expect":{"ok":0}}
+{"id":224,"args":["ßitQDe9zg,w","V🎉Spñ 3UpqyErB,2Lb7?ZHOM"],"expect":{"ok":0}}
+{"id":225,"args":["L",""],"expect":{"ok":0}}
+{"id":226,"args":["camelCaseString","5FX1C0Gq4pt?Yk"],"expect":{"ok":0}}
+{"id":227,"args":["m5dI5qQv0中dGFd0X-iMu","0"],"expect":{"ok":0}}
+{"id":228,"args":["quote\"d","racecar"],"expect":{"ok":0}}
+{"id":229,"args":["-1","Y.l3S"],"expect":{"ok":0}}
+{"id":230,"args":["a,b,c","gJBZ0Z7hmjDxΩ!.uDL57ZHU"],"expect":{"ok":0}}
+{"id":231,"args":["--dash--","3.14"],"expect":{"ok":0}}
+{"id":232,"args":["Hello, World!","snake_case_string"],"expect":{"ok":0}}
+{"id":233,"args":["tab\tsep"," sTeP8o-中eo.pwqZ4mEGCX"],"expect":{"ok":0}}
+{"id":234,"args":["UPPER lower","ED7V🎉n261R жkh4  "],"expect":{"ok":0}}
+{"id":235,"args":["3.14","snake_case_string"],"expect":{"ok":0}}
+{"id":236,"args":["Y,NlxjΩl0wRHiK","null"],"expect":{"ok":0}}
+{"id":237,"args":["quote\"d","tab\tsep"],"expect":{"ok":0}}
+{"id":238,"args":["hello world","7🎉h,CTY中 3a中7?"],"expect":{"ok":0}}
+{"id":239,"args":["line1\nline2","EVvXVeccXZñ!o-"],"expect":{"ok":0}}
+{"id":240,"args":["corr, eYcBO .53sGIzD🎉F5"," "],"expect":{"ok":0}}
+{"id":241,"args":["--dash--","The quick brown fox jumps over the lazy dog"],"expect":{"ok":0}}
+{"id":242,"args":["a,b,c","abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij"],"expect":{"ok":0}}
+{"id":243,"args":[" ","camelCaseString"],"expect":{"ok":0}}
+{"id":244,"args":["3.14","vJ中s1,o5f B"],"expect":{"ok":0}}
+{"id":245,"args":["snake_case_string","6k "],"expect":{"ok":0}}
+{"id":246,"args":["BR aCb_0é55ΩxVUKuBRSQ","FbΩ8r,K中3_dh97jCñjzp"],"expect":{"ok":0}}
+{"id":247,"args":["hello world","aU_ΩLFXBze!1SdtwOdVHPO"],"expect":{"ok":0}}
+{"id":248,"args":["h?F91EéulmΩ7SaX6","z"],"expect":{"ok":0}}
+{"id":249,"args":["back\\slash","Xz2sszyi3KßmgZ"],"expect":{"ok":0}}
+{"id":250,"args":["esztX1JZ fENq25I, é,? ","JQ xisz"],"expect":{"ok":0}}
+{"id":251,"args":["camelCaseString","--dash--"],"expect":{"ok":0}}
+{"id":252,"args":["🎉xñVrgsRlCΩB8","jnXMbnh7ELRfzQeA39"],"expect":{"ok":0}}
+{"id":253,"args":["  padded  ","abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij"],"expect":{"ok":0}}
+{"id":254,"args":["back\\slash","hVSt🎉CUΩжh8PW1abhswKE"],"expect":{"ok":0}}
+{"id":255,"args":["ünïcödé","snake_case_string"],"expect":{"ok":0}}
+{"id":256,"args":["emoji 🎉 ok","aaaa"],"expect":{"ok":0}}
+{"id":257,"args":["a,b,c","quote\"d"],"expect":{"ok":0}}
+{"id":258,"args":[",giEM2MTu.!oZ","жHzOuPpH中 Dé99IAWIhEpY"],"expect":{"ok":0}}
+{"id":259,"args":["ünïcödé","2E ?pa?rDA8t"],"expect":{"ok":0}}
+{"id":260,"args":["UPPER lower","ünïcödé"],"expect":{"ok":0}}
+{"id":261,"args":["emoji 🎉 ok","3.14"],"expect":{"ok":0}}
+{"id":262,"args":["H rEE!03p t0oYUi LVwj0S","ñBO🎉nj1 d-Rz9Ar"],"expect":{"ok":0}}
+{"id":263,"args":["rI中fSßh.pBLJж 6mO","I !🎉nS2K"],"expect":{"ok":0}}
+{"id":264,"args":[" o","AkTICK27RXyΩ9p,fD0tYCmUN"],"expect":{"ok":0}}
+{"id":265,"args":["Pt t.lñ52 kyΩßx3 f",""],"expect":{"ok":0}}
+{"id":266,"args":["a","a,b,c"],"expect":{"ok":1}}
+{"id":267,"args":["Uu dBa0j5Z9Pjvt?9D0lR","QgAΩpT-iDL🎉NG0MPcP"],"expect":{"ok":0}}
+{"id":268,"args":["line1\nline2","Hello, World!"],"expect":{"ok":0}}
+{"id":269,"args":["0","null"],"expect":{"ok":0}}
+{"id":270,"args":["camelCaseString","abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij"],"expect":{"ok":0}}
+{"id":271,"args":["FxqéL7pxB OV","yhEr3D2waW中8l7pU"],"expect":{"ok":0}}
+{"id":272,"args":["3.14","  padded  "],"expect":{"ok":0}}
+{"id":273,"args":["Ap 8 Dé2U ","aM7kuCT187I43w"],"expect":{"ok":0}}
+{"id":274,"args":["line1\nline2","L3 ffo G1aY pzj"],"expect":{"ok":0}}
+{"id":275,"args":["3F中vv🎉gkzcD","T8Ωx!"],"expect":{"ok":0}}
+{"id":276,"args":["-1","Ez.rn9RUK3U7 9e"],"expect":{"ok":0}}
+{"id":277,"args":["LRWykUXzNh🎉FL","snake_case_string"],"expect":{"ok":0}}
+{"id":278,"args":["quote\"d","6TQh"],"expect":{"ok":0}}
+{"id":279,"args":["","yA"],"expect":{"ok":1}}
+{"id":280,"args":["a","3.14"],"expect":{"ok":0}}
+{"id":281,"args":["nжTc","6w3gwPjtsPZp?5l_XZa.ж"],"expect":{"ok":0}}
+{"id":282,"args":["tab\tsep","racecar"],"expect":{"ok":0}}
+{"id":283,"args":["66IcCdñC4Nfq657","xhI g5GGROGBp_ov70h"],"expect":{"ok":0}}
+{"id":284,"args":["IePb ß7g🎉ZP🎉ncéé6 🎉K? m","snake_case_string"],"expect":{"ok":0}}
+{"id":285,"args":["LUñgwé8u7dnP49NCS FQYik","line1\nline2"],"expect":{"ok":0}}
+{"id":286,"args":["o 1CQjwD5DoB 8?gQ 4JASy","日本語テキスト"],"expect":{"ok":0}}
+{"id":287,"args":["44H0jM!O6eHI3XGz O.b3中-","0🎉lshrym  HZ"],"expect":{"ok":0}}
+{"id":288,"args":[" ","kT5aG  6ywP中🎉3Se6"],"expect":{"ok":0.429}}

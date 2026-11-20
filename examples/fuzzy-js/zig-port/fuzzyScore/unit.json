@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "name": "fuzzyScore",
+  "language": "javascript",
+  "source": "../../src/fuzzy.mjs",
+  "function": "fuzzyScore",
+  "params": [
+    {
+      "name": "query",
+      "type": "string",
+      "optional": false
+    },
+    {
+      "name": "text",
+      "type": "string",
+      "optional": false
+    }
+  ],
+  "returns": null,
+  "is_async": false
+}

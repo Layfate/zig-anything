@@ -215,7 +215,7 @@ pub fn run(c: *cli.Ctx, args: cli.Parsed) !u8 {
     if (verify) c.print("  flaky     {d}{s}\n", .{ n_flaky, if (n_flaky > 0) " (results differed between two runs; diff skips them)" else "" });
     if (n_opaque > 0) c.warn("{d} result(s) contain functions, symbols or BigInts that JSON cannot carry; those cases cannot match", .{n_opaque});
     if (n_flaky * 2 > inputs.items.len) c.warn("most results are nondeterministic (time, randomness or I/O?); the recording is weak evidence", .{});
-    if (u.manifest.returns == null and kinds.count() == 1 and n_err < inputs.items.len) {
+    if (u.manifest.returns == null and kinds.count() == 1 and n_err < inputs.items.len and unit_mod.portIsStub(c, u)) {
         c.hint("every call returned {s}; consider making that the port's return type", .{kinds.keys()[0]});
     }
     return 0;

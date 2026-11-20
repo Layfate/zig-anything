@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
+      - name: Build all targets
+        run: zig build release
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir dist
+          for dir in zig-out/release/*/; do
+            triple=$(basename "$dir")
+            name="zig-anything-${GITHUB_REF_NAME}-${triple}"
+            mkdir -p "stage/$name"
+            cp "$dir"/* README.md LICENSE CHANGELOG.md "stage/$name/"
+            if [[ "$triple" == *windows* ]]; then
+              (cd stage && zip -qr "../dist/$name.zip" "$name")
+            else
+              tar -C stage -czf "dist/$name.tar.gz" "$name"
+            fi
+          done
+          (cd dist && sha256sum * > SHA256SUMS)
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file CHANGELOG.md

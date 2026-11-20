@@ -635,6 +635,9 @@ fn scanJs(a: Allocator, src: []const u8) ![]Function {
         fn f(al: Allocator, map: *std.StringHashMapUnmanaged(std.ArrayList([]const u8)), local: []const u8, exported_as: []const u8) !void {
             const gop = try map.getOrPut(al, local);
             if (!gop.found_existing) gop.value_ptr.* = .empty;
+            for (gop.value_ptr.items) |existing| {
+                if (std.mem.eql(u8, existing, exported_as)) return;
+            }
             try gop.value_ptr.append(al, exported_as);
         }
     }.f;

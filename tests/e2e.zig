@@ -54,12 +54,20 @@ fn copyTree(io: Io, a: Allocator, src: []const u8, dst: []const u8) !void {
     const cwd = Io.Dir.cwd();
     var dir = try cwd.openDir(io, src, .{ .iterate = true });
     defer dir.close(io);
-    var walker = try dir.walk(a);
+    var walker = try dir.walkSelectively(a);
     defer walker.deinit();
     while (try walker.next(io)) |e| {
         const to = try std.fs.path.join(a, &.{ dst, e.path });
         switch (e.kind) {
-            .directory => try cwd.createDirPath(io, to),
+            .directory => {
+                // Skip build outputs and scratch state from local runs.
+                const skip = [_][]const u8{ ".zig-cache", "zig-out", "zig-out-fast", ".za", "node_modules", "__pycache__" };
+                var skipped = false;
+                for (skip) |name| skipped = skipped or std.mem.eql(u8, e.basename, name);
+                if (skipped) continue;
+                try cwd.createDirPath(io, to);
+                try walker.enter(io, e);
+            },
             .file => {
                 if (std.fs.path.dirname(to)) |d| try cwd.createDirPath(io, d);
                 try Io.Dir.copyFile(dir, e.path, cwd, to, io, .{});

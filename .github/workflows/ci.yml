@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Format
+        if: runner.os == 'Linux'
+        run: zig fmt --check src tests bench build.zig
+      - name: Unit tests
+        run: zig build test --summary all
+      - name: End-to-end tests
+        run: zig build e2e
+      - name: Release build (all targets)
+        if: runner.os == 'Linux'
+        run: zig build release
+      - name: Binary sizes
+        if: runner.os == 'Linux'
+        run: ls -l zig-out/release/*/

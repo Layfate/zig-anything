@@ -1,0 +1,4 @@
+zig-out/
+zig-out-fast/
+.zig-cache/
+.za/

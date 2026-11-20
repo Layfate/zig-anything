@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "name": "levenshtein",
+  "language": "python",
+  "source": "../../src/textdist.py",
+  "function": "levenshtein",
+  "params": [
+    {
+      "name": "a",
+      "type": "string",
+      "optional": false
+    },
+    {
+      "name": "b",
+      "type": "string",
+      "optional": false
+    }
+  ],
+  "returns": "int",
+  "is_async": false
+}
