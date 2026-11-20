@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const version = "0.1.0";
+const version = "0.1.1";
 
 /// Targets produced by `zig build release`.
 const release_targets = [_]std.Target.Query{

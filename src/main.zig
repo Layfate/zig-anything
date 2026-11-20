@@ -52,8 +52,8 @@ const help_flag: cli.Flag = .{ .name = "help", .help = "show help for this comma
 
 fn printMainHelp(c: *cli.Ctx) void {
     c.print(
-        \\{s}zig-anything{s} {s}: port JS, TS and Python code to Zig one function at a time,
-        \\proven against the original's recorded behavior.
+        \\{s}zig-anything{s} {s}: port JS, TS and Python functions, and whole command-line
+        \\programs, to Zig one piece at a time, proven against the original's recorded behavior.
         \\
         \\{s}usage:{s} zig-anything <command> [arguments] [flags]
         \\

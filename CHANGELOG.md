@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-21
+
+### Fixed
+
+- `zig-anything help` now describes whole-program support in its first line.
+
 ## [0.1.0] - 2026-11-21
 
 First release.
