@@ -14,6 +14,12 @@
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
 </p>
 
+<p align="center">
+  <img src="docs/assets/demo.gif" alt="A Python Levenshtein function and its Zig port running the same 253 recorded cases: 162.8 ms versus 17.9 ms" width="880">
+  <br>
+  <sub>Measured with <code>zig-anything bench</code> on <a href="examples/levenshtein-py">examples/levenshtein-py</a>. Regenerate with <code>python scripts/make_demo_gif.py</code>.</sub>
+</p>
+
 ZigAnything records what a function in your existing code actually does (on generated edge cases, semantic traps and inputs you supply), scaffolds a Zig port of it, and replays every recorded case against the port until they all match. A single command, `gate`, decides when a port is done.
 
 ```text
