@@ -1,10 +1,18 @@
-# ZigAnything
+<p align="center">
+  <img src="docs/assets/logo.png" alt="ZigAnything logo" width="160">
+</p>
 
-**Port JavaScript, TypeScript and Python code to Zig one function at a time, and prove every port behaves exactly like the original.**
+<h1 align="center">ZigAnything</h1>
 
-[![CI](https://github.com/OWNER/zig-anything/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/zig-anything/actions/workflows/ci.yml)
-![Zig 0.17.1](https://img.shields.io/badge/zig-0.17.1-f7a41d)
-![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+<p align="center">
+  <strong>Port JavaScript, TypeScript and Python code to Zig one function at a time, and prove every port behaves exactly like the original.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Layfate/zig-anything/actions/workflows/ci.yml"><img src="https://github.com/Layfate/zig-anything/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/zig-0.17.1-f7a41d" alt="Zig 0.17.1">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
+</p>
 
 ZigAnything records what a function in your existing code actually does (on generated edge cases, semantic traps and inputs you supply), scaffolds a Zig port of it, and replays every recorded case against the port until they all match. A single command, `gate`, decides when a port is done.
 
@@ -41,12 +49,12 @@ case 22: different value
 
 ## Install
 
-**Prebuilt binaries.** Download the archive for your platform from the [releases page](https://github.com/OWNER/zig-anything/releases). Builds exist for Linux (x86_64, aarch64; static musl), macOS (x86_64, Apple Silicon) and Windows (x86_64, aarch64). Put `zig-anything` on your `PATH`.
+**Prebuilt binaries.** Download the archive for your platform from the [releases page](https://github.com/Layfate/zig-anything/releases). Builds exist for Linux (x86_64, aarch64; static musl), macOS (x86_64, Apple Silicon) and Windows (x86_64, aarch64). Put `zig-anything` on your `PATH`.
 
 **From source** (needs [Zig 0.17.1](https://ziglang.org/download/)):
 
 ```sh
-git clone https://github.com/OWNER/zig-anything
+git clone https://github.com/Layfate/zig-anything
 cd zig-anything
 zig build -Doptimize=fast
 # binary: zig-out/bin/zig-anything
