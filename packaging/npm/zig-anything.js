@@ -18,7 +18,7 @@ const targets = {
 const key = `${process.platform}-${process.arch}`;
 const target = targets[key];
 if (!target) {
-  console.error(`zig-anything: no prebuilt binary for ${key}; build from source: https://github.com/Layfate/zig-anything#building-from-source`);
+  console.error(`zig-anything: no prebuilt binary for ${key}; build from source: https://github.com/Layfate/zig-anything/blob/main/docs/GUIDE.md#building-from-source`);
   process.exit(3);
 }
 const exe = path.join(__dirname, '..', 'binaries', target, process.platform === 'win32' ? 'zig-anything.exe' : 'zig-anything');
