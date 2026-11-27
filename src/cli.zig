@@ -23,6 +23,10 @@ pub const Ctx = struct {
     color: bool,
     /// Absolute current working directory.
     cwd: []const u8,
+    /// `--no-cache`: always run the compiler.
+    no_cache: bool = false,
+    /// stdout is an interactive terminal (progress lines are worth printing).
+    tty: bool = false,
 
     pub fn s(c: *const Ctx, st: Style) []const u8 {
         if (!c.color) return "";
@@ -207,6 +211,14 @@ pub fn parseFloat(c: *Ctx, p: Parsed, name: []const u8, default: f64) Reported!f
     const f = std.fmt.parseFloat(f64, v) catch return c.fail("--{s} expects a number, got '{s}'", .{ name, v });
     if (!std.math.isFinite(f) or f < 0) return c.fail("--{s} must be a finite, non-negative number", .{name});
     return f;
+}
+
+/// Worker count for parallel work: `--jobs N`, else the configured value,
+/// else one per CPU core. Never less than 1.
+pub fn jobCount(c: *Ctx, p: Parsed, configured: u32) Reported!usize {
+    const n = try parseInt(u32, c, p, "jobs", configured);
+    if (n > 0) return n;
+    return std.Thread.getCpuCount() catch 1;
 }
 
 test "parse flags and positionals" {

@@ -10,6 +10,7 @@ const json = std.json;
 const cli = @import("../cli.zig");
 const config = @import("../config.zig");
 const lang = @import("../lang.zig");
+const adapter = @import("../adapter.zig");
 const proc = @import("../proc.zig");
 const scan = @import("../scan.zig");
 const Io = std.Io;
@@ -147,7 +148,7 @@ fn markPortable(c: *cli.Ctx, rows: []Row) void {
             gop.value_ptr.* = scan.scanSource(c.arena, language, text) catch &.{};
         }
         for (gop.value_ptr.*) |f| {
-            if (std.mem.eql(u8, f.name, r.function) and (f.exported or !language.isJs())) {
+            if (std.mem.eql(u8, f.name, r.function) and (f.exported or !adapter.forLanguage(language).requires_export)) {
                 r.portable = true;
                 break;
             }
@@ -171,7 +172,7 @@ pub fn run(c: *cli.Ctx, args: cli.Parsed) !u8 {
     var rows: []Row = &.{};
     var total_ns: f64 = 0;
     var wall_ns: u64 = 0;
-    if (language.isJs()) {
+    if (adapter.forLanguage(language).bridge == .node) {
         const extra = std.mem.concat(c.arena, []const u8, &.{
             &.{ "--cpu-prof", "--cpu-prof-dir", work, "--cpu-prof-name", "profile.cpuprofile", script },
             script_args,
@@ -237,7 +238,7 @@ pub fn run(c: *cli.Ctx, args: cli.Parsed) !u8 {
         return 0;
     }
     var b: [32]u8 = undefined;
-    c.print("{s}profile {s}{s}  ({s}, {s} profiled)\n", .{ c.s(.bold), c.rel(script), c.s(.reset), if (language.isJs()) "node" else "python", proc.fmtNs(&b, total_ns) });
+    c.print("{s}profile {s}{s}  ({s}, {s} profiled)\n", .{ c.s(.bold), c.rel(script), c.s(.reset), adapter.forLanguage(language).runtime, proc.fmtNs(&b, total_ns) });
     if (shown.len == 0) {
         c.print("no functions from files under {s} took measurable time\n", .{c.rel(c.cwd)});
         c.hint("pass --all to include libraries and runtime internals", .{});

@@ -26,13 +26,10 @@ pub const Options = struct {
     stdin_path: ?[]const u8 = null,
 };
 
-const RunError = std.process.SpawnError || Io.File.MultiReader.UnendingError || Io.Timeout.Error ||
-    Io.File.OpenError || error{StreamTooLong};
-
 const Captured = struct { term: std.process.Child.Term, stdout: []u8, stderr: []u8 };
 
 /// std.process.run, plus an optional stdin file.
-fn spawnCapture(c: *cli.Ctx, argv: []const []const u8, opts: Options) RunError!Captured {
+fn spawnCapture(c: *cli.Ctx, argv: []const []const u8, opts: Options) SpawnError!Captured {
     const io = c.io;
     var stdin_file: ?Io.File = null;
     if (opts.stdin_path) |p| stdin_file = try Io.Dir.cwd().openFile(io, p, .{});
@@ -67,19 +64,15 @@ fn spawnCapture(c: *cli.Ctx, argv: []const []const u8, opts: Options) RunError!C
     return .{ .term = term, .stdout = try mr.toOwnedSlice(0), .stderr = try mr.toOwnedSlice(1) };
 }
 
-/// Runs `argv` to completion and captures its output. Failing to start the
-/// process (missing executable, timeout) is reported as a user-facing error.
-pub fn run(c: *cli.Ctx, argv: []const []const u8, opts: Options) cli.Reported!Result {
+pub const RunError = SpawnError;
+const SpawnError = std.process.SpawnError || Io.File.MultiReader.UnendingError || Io.Timeout.Error ||
+    Io.File.OpenError || error{StreamTooLong};
+
+/// Runs `argv` to completion without printing anything. Safe to call from
+/// concurrent tasks (the arena and the Io implementation are threadsafe).
+pub fn runQuiet(c: *cli.Ctx, argv: []const []const u8, opts: Options) RunError!Result {
     const start = Io.Timestamp.now(c.io, .awake);
-    const r = spawnCapture(c, argv, opts) catch |err| switch (err) {
-        error.FileNotFound, error.InvalidExe => {
-            if (opts.stdin_path) |p| Io.Dir.cwd().access(c.io, p, .{}) catch return c.fail("cannot open stdin file {s}", .{p});
-            if (opts.missing_hint) |h| c.hint("{s}", .{h});
-            return c.fail("could not start `{s}`: not found on PATH", .{argv[0]});
-        },
-        error.Timeout => return c.fail("`{s}` did not finish within {d}s (raise \"timeout\" in zig-anything.json)", .{ argv[0], opts.timeout_s }),
-        else => return c.fail("could not run `{s}`: {s}", .{ argv[0], @errorName(err) }),
-    };
+    const r = try spawnCapture(c, argv, opts);
     const ns: u64 = @intCast(@max(0, start.durationTo(Io.Timestamp.now(c.io, .awake)).nanoseconds));
     return .{
         .ok = r.term.success(),
@@ -91,6 +84,76 @@ pub fn run(c: *cli.Ctx, argv: []const []const u8, opts: Options) cli.Reported!Re
         .stderr = r.stderr,
         .ns = ns,
     };
+}
+
+/// Turns a failure to start or finish a process into a user-facing error.
+pub fn reportRunError(c: *cli.Ctx, argv: []const []const u8, opts: Options, err: RunError) cli.Reported {
+    switch (err) {
+        error.FileNotFound, error.InvalidExe => {
+            if (opts.stdin_path) |p| Io.Dir.cwd().access(c.io, p, .{}) catch return c.fail("cannot open stdin file {s}", .{p});
+            if (opts.missing_hint) |h| c.hint("{s}", .{h});
+            return c.fail("could not start `{s}`: not found on PATH", .{argv[0]});
+        },
+        error.Timeout => return c.fail("`{s}` did not finish within {d}s (raise \"timeout\" in zig-anything.json)", .{ argv[0], opts.timeout_s }),
+        else => return c.fail("could not run `{s}`: {s}", .{ argv[0], @errorName(err) }),
+    }
+}
+
+/// Runs `argv` to completion and captures its output. Failing to start the
+/// process (missing executable, timeout) is reported as a user-facing error.
+pub fn run(c: *cli.Ctx, argv: []const []const u8, opts: Options) cli.Reported!Result {
+    return runQuiet(c, argv, opts) catch |err| reportRunError(c, argv, opts, err);
+}
+
+pub const Job = struct {
+    argv: []const []const u8,
+    opts: Options,
+};
+
+/// Runs every job concurrently and returns each job's own result or error,
+/// without printing anything.
+pub fn runManyQuiet(c: *cli.Ctx, jobs: []const Job) cli.Reported![]RunError!Result {
+    const results = c.arena.alloc(RunError!Result, jobs.len) catch return c.fail("out of memory", .{});
+    const Task = struct {
+        fn go(cc: *cli.Ctx, job: Job, slot: *(RunError!Result)) void {
+            slot.* = runQuiet(cc, job.argv, job.opts);
+        }
+    };
+    var group: Io.Group = .init;
+    for (jobs, results) |job, *slot| {
+        group.concurrent(c.io, Task.go, .{ c, job, slot }) catch Task.go(c, job, slot);
+    }
+    group.await(c.io) catch return c.fail("interrupted", .{});
+    return results;
+}
+
+/// Runs every job concurrently (falling back to one at a time when the Io
+/// implementation cannot run tasks concurrently) and waits for all of them.
+/// The first job that could not be run is reported as a user-facing error.
+pub fn runMany(c: *cli.Ctx, jobs: []const Job) cli.Reported![]Result {
+    const results = try runManyQuiet(c, jobs);
+    const out = c.arena.alloc(Result, jobs.len) catch return c.fail("out of memory", .{});
+    for (results, jobs, out) |r, job, *o| {
+        o.* = r catch |err| return reportRunError(c, job.argv, job.opts, err);
+    }
+    return out;
+}
+
+/// Finds `name` the way a shell would: as given when it contains a path
+/// separator, else in each PATH directory (with PATHEXT on Windows).
+pub fn findExecutable(c: *cli.Ctx, name: []const u8) ?[]const u8 {
+    if (std.mem.indexOfAny(u8, name, "/\\") != null) return name;
+    const path_var = c.env.get("PATH") orelse c.env.get("Path") orelse return null;
+    const exts: []const []const u8 = if (builtin.os.tag == .windows) &.{ ".exe", ".cmd", ".bat", "" } else &.{""};
+    var it = std.mem.tokenizeScalar(u8, path_var, std.fs.path.delimiter);
+    while (it.next()) |dir| {
+        for (exts) |ext| {
+            const full = std.fmt.allocPrint(c.arena, "{s}{c}{s}{s}", .{ dir, std.fs.path.sep, name, ext }) catch return null;
+            Io.Dir.cwd().access(c.io, full, .{}) catch continue;
+            return full;
+        }
+    }
+    return null;
 }
 
 /// Appends `extra` to a configured command prefix.

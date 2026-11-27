@@ -15,12 +15,15 @@ const cli = @import("cli.zig");
 const config = @import("config.zig");
 const lang = @import("lang.zig");
 const proc = @import("proc.zig");
+const hash = @import("hash.zig");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 pub const manifest_name = "unit.json";
 pub const cases_name = "cases.jsonl";
 pub const inputs_name = "inputs.jsonl";
+/// Inputs found by `zig-anything fuzz`; recorded like inputs.jsonl.
+pub const fuzz_inputs_name = "inputs.fuzz.jsonl";
 pub const work_dir = ".za";
 pub const todo_marker = "TODO(zig-anything)";
 
@@ -265,10 +268,135 @@ pub fn refreshRuntime(c: *cli.Ctx, u: Unit) cli.Reported!void {
     try writeFile(c, p, rt_source);
 }
 
+// ---------------------------------------------------------------- build cache
+
+const skip_dirs = std.StaticStringMap(void).initComptime(.{
+    .{"zig-out"}, .{"zig-out-fast"}, .{".zig-cache"}, .{work_dir}, .{"bridge"}, .{"node_modules"}, .{".git"},
+});
+
+/// Adds every `@import("x.zig")` / `@embedFile("x")` path in `text` that
+/// leaves `unit_dir` to `out` (resolved against `file_dir`).
+fn escapingRefs(c: *cli.Ctx, unit_dir: []const u8, file_dir: []const u8, text: []const u8, out: *std.ArrayList([]const u8)) void {
+    for ([_][]const u8{ "@import(\"", "@embedFile(\"" }) |needle| {
+        var at: usize = 0;
+        while (std.mem.indexOfPos(u8, text, at, needle)) |i| {
+            at = i + needle.len;
+            const end = std.mem.indexOfScalarPos(u8, text, at, '"') orelse break;
+            const ref = text[at..end];
+            if (std.mem.eql(u8, needle, "@import(\"") and !std.mem.endsWith(u8, ref, ".zig")) continue; // a module, e.g. "std"
+            const full = std.fs.path.resolveAlloc(c.arena, &.{ file_dir, ref }) catch continue;
+            const rel_path = std.fs.path.relativeAlloc(c.arena, c.cwd, c.env, unit_dir, full) catch continue;
+            if (!std.mem.startsWith(u8, rel_path, "..")) continue; // already hashed with the unit
+            for (out.items) |seen| {
+                if (std.mem.eql(u8, seen, full)) break;
+            } else out.append(c.arena, full) catch {};
+        }
+    }
+}
+
+/// A key for everything `zig build` reads for this unit: build files, all of
+/// src/, files outside the unit that the sources import or embed, the
+/// compiler binary, the mode and the step. Null when the unit cannot be read.
+fn buildKey(c: *cli.Ctx, u: Unit, optimize: Optimize, prefix: []const u8, step: ?[]const u8) ?hash.Hex {
+    var h: hash.Builder = .{};
+    h.add("mode", @tagName(optimize));
+    h.add("prefix", prefix);
+    h.add("step", step orelse "install");
+    h.add("zig", u.cfg.config.zig);
+    // The compiler itself: identify it by size and mtime (cheap, and changes
+    // whenever Zig is upgraded in place).
+    if (proc.findExecutable(c, u.cfg.config.zig)) |zig_path| {
+        if (Io.Dir.cwd().statFile(c.io, zig_path, .{})) |st| {
+            var buf: [64]u8 = undefined;
+            h.add("zig-stat", std.fmt.bufPrint(&buf, "{d}:{d}", .{ st.size, st.mtime.nanoseconds }) catch "");
+        } else |_| {}
+    }
+    var files: std.ArrayList([]const u8) = .empty;
+    for ([_][]const u8{ "build.zig", "build.zig.zon" }) |name| files.append(c.arena, u.path(c.arena, name)) catch return null;
+    {
+        const src_dir = u.path(c.arena, "src");
+        var dir = Io.Dir.cwd().openDir(c.io, src_dir, .{ .iterate = true }) catch return null;
+        defer dir.close(c.io);
+        var walker = dir.walkSelectively(c.gpa) catch return null;
+        defer walker.deinit();
+        while (walker.next(c.io) catch return null) |entry| {
+            if (entry.kind == .directory) {
+                if (!skip_dirs.has(entry.basename) and entry.basename[0] != '.') walker.enter(c.io, entry) catch return null;
+                continue;
+            }
+            files.append(c.arena, std.fs.path.join(c.arena, &.{ src_dir, entry.path }) catch return null) catch return null;
+        }
+    }
+    // Sorted, so the key does not depend on directory iteration order.
+    std.mem.sort([]const u8, files.items, {}, struct {
+        fn lt(_: void, x: []const u8, y: []const u8) bool {
+            return std.mem.lessThan(u8, x, y);
+        }
+    }.lt);
+    var i: usize = 0;
+    while (i < files.items.len) : (i += 1) {
+        const f = files.items[i];
+        const text = Io.Dir.cwd().readFileAlloc(c.io, f, c.arena, .limited(64 << 20)) catch |err| switch (err) {
+            error.FileNotFound => {
+                h.add(f, "<missing>");
+                continue;
+            },
+            else => return null,
+        };
+        const rel_name = std.fs.path.relativeAlloc(c.arena, c.cwd, c.env, u.dir, f) catch f;
+        h.add(rel_name, text);
+        if (std.mem.endsWith(u8, f, ".zig")) {
+            var extra: std.ArrayList([]const u8) = .empty;
+            escapingRefs(c, u.dir, std.fs.path.dirname(f) orelse u.dir, text, &extra);
+            for (extra.items) |e| {
+                for (files.items) |known| {
+                    if (std.mem.eql(u8, known, e)) break;
+                } else files.append(c.arena, e) catch return null;
+            }
+        }
+    }
+    return h.final();
+}
+
+fn cachePath(c: *cli.Ctx, u: Unit, optimize: Optimize, prefix: []const u8, step: ?[]const u8) []const u8 {
+    return u.workPath(c.arena, std.fmt.allocPrint(c.arena, "build.{s}.{s}.{s}.key", .{ prefix, step orelse "install", @tagName(optimize) }) catch "build.key");
+}
+
+/// The stamp stored with a key: the build output's size and mtime, so a
+/// binary replaced behind our back invalidates the cache.
+fn outputStamp(c: *cli.Ctx, u: Unit, prefix: []const u8, step: ?[]const u8) []const u8 {
+    if (step != null) return "-";
+    const exe = u.harnessExe(c.arena, prefix);
+    const exe_path = if (u.isCli()) std.fs.path.join(c.arena, &.{ u.dir, prefix, "bin", "port" ++ proc.exe_suffix }) catch exe else exe;
+    const st = Io.Dir.cwd().statFile(c.io, exe_path, .{}) catch return "<missing>";
+    return std.fmt.allocPrint(c.arena, "{d}:{d}", .{ st.size, st.mtime.nanoseconds }) catch "?";
+}
+
 /// Runs `zig build` for the unit. Prints compiler output and returns false
-/// on failure.
+/// on failure. Skips the compiler entirely when nothing it reads changed
+/// since the last successful build with the same mode and step.
 pub fn build(c: *cli.Ctx, u: Unit, optimize: Optimize, prefix: []const u8, step: ?[]const u8) cli.Reported!bool {
     try refreshRuntime(c, u);
+    const use_cache = u.cfg.config.cache and !c.no_cache;
+    const key: ?hash.Hex = if (use_cache) buildKey(c, u, optimize, prefix, step) else null;
+    const key_path = cachePath(c, u, optimize, prefix, step);
+    if (key) |k| {
+        const saved = Io.Dir.cwd().readFileAlloc(c.io, key_path, c.arena, .limited(4096)) catch "";
+        const want = std.fmt.allocPrint(c.arena, "{s} {s}", .{ &k, outputStamp(c, u, prefix, step) }) catch "";
+        if (want.len > 0 and std.mem.eql(u8, std.mem.trim(u8, saved, " \r\n"), want)) return true;
+    }
+    const ok = try buildUncached(c, u, optimize, prefix, step);
+    if (ok) {
+        if (key) |k| {
+            u.ensureWorkDir(c) catch {};
+            const line = std.fmt.allocPrint(c.arena, "{s} {s}\n", .{ &k, outputStamp(c, u, prefix, step) }) catch "";
+            Io.Dir.cwd().writeFile(c.io, .{ .sub_path = key_path, .data = line }) catch {};
+        }
+    } else Io.Dir.cwd().deleteFile(c.io, key_path) catch {};
+    return ok;
+}
+
+fn buildUncached(c: *cli.Ctx, u: Unit, optimize: Optimize, prefix: []const u8, step: ?[]const u8) cli.Reported!bool {
     const opt_arg = std.fmt.allocPrint(c.arena, "-Doptimize={s}", .{@tagName(optimize)}) catch return c.fail("out of memory", .{});
     var argv: std.ArrayList([]const u8) = .empty;
     argv.appendSlice(c.arena, &.{ u.cfg.config.zig, "build" }) catch return c.fail("out of memory", .{});

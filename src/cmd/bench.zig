@@ -8,6 +8,7 @@
 //!               every case once (includes startup)
 
 const std = @import("std");
+const integrate = @import("integrate.zig");
 const json = std.json;
 const cli = @import("../cli.zig");
 const proc = @import("../proc.zig");
@@ -63,7 +64,7 @@ fn timed(c: *cli.Ctx, u: unit_mod.Unit, side: Side, cases_path: []const u8, iter
     const out = u.workPath(c.arena, if (side == .original) "bench.original.json" else "bench.port.json");
     switch (side) {
         .original => {
-            const r = try runtime.invoke(c, u, .bench, cases_path, out, iters);
+            const r = try runtime.invoke(c, u, .bench, cases_path, out, .{ .iterations = iters });
             if (!r.ok) return runtime.reportFailure(c, u, r);
         },
         .port => {
@@ -83,7 +84,7 @@ fn processRun(c: *cli.Ctx, u: unit_mod.Unit, side: Side, cases_path: []const u8)
     const out = u.workPath(c.arena, "bench.e2e.jsonl");
     switch (side) {
         .original => {
-            const r = try runtime.invoke(c, u, .run, cases_path, out, 1);
+            const r = try runtime.invoke(c, u, .run, cases_path, out, .{});
             if (!r.ok) return runtime.reportFailure(c, u, r);
             return @floatFromInt(r.ns);
         },
@@ -195,6 +196,7 @@ fn ratio(buf: []u8, x: f64) []const u8 {
 pub fn run(c: *cli.Ctx, args: cli.Parsed) !u8 {
     const u = try unit_mod.load(c, args.pos(0));
     if (u.isCli()) return program.runBench(c, u, args);
+    try integrate.refuseIfIntegrated(c, u, "benchmarking");
     if (unit_mod.portIsStub(c, u)) c.warn("src/port.zig still has the {s} marker; timings may be meaningless", .{unit_mod.todo_marker});
     const runs = try cli.parseInt(u32, c, args, "runs", 5);
     if (runs == 0) return c.fail("--runs must be at least 1", .{});

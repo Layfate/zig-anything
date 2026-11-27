@@ -33,11 +33,13 @@ case 22: different value
 
 *That mismatch is real: the first Zig port counted bytes, but JavaScript counts UTF-16 code units. The recording caught it.*
 
-- **One static binary**, about 0.4–0.8 MB, with no runtime dependencies. Written in Zig with only the standard library.
+- **One static binary**, about 0.75–1.1 MB, with no runtime dependencies. Written in Zig with only the standard library. Also on npm and PyPI.
 - **Language-agnostic replay.** The original runs in its own runtime (Node or Python) through a small embedded recorder. The port runs as a native Zig harness. Results meet as JSON lines.
-- **Semantic comparison.** `1`, `1.0` and `1e0` are equal, object key order is ignored, and NaN/±Infinity survive the round trip. Thrown errors match returned Zig errors.
+- **Semantic comparison.** `1`, `1.0` and `1e0` are equal, object key order is ignored, and NaN/±Infinity survive the round trip. Thrown errors match returned Zig errors. Optionally, argument mutation and printed output are compared too.
+- **Whole-project migrations.** `plan` orders a project's functions (callees first, hot code first), `fuzz` finds inputs the recording missed, and `integrate` switches callers to a proven port with verification and automatic rollback.
+- **Fast native bridge.** A finished port is callable from Node through a Node-API addon (TypedArrays without copying, WebAssembly fallback) and from Python through `ctypes`.
 - **Measured, not claimed.** `bench` times both sides on the same recorded inputs and reports a verdict, including when the port is *slower*.
-- **Agent-ready.** `zig-anything mcp` exposes every command as a Model Context Protocol tool.
+- **Agent-ready.** `zig-anything mcp` exposes every command as a Model Context Protocol tool with compact results, and `setup-agent` registers it with Claude Code, Cursor and VS Code.
 
 ## Contents
 
@@ -46,6 +48,7 @@ case 22: different value
 - [Quick start](#quick-start)
 - [Commands](#commands)
 - [How it works](#how-it-works)
+- [Migrating a whole project](#migrating-a-whole-project)
 - [Calling the port from your code](#calling-the-port-from-your-code)
 - [Porting whole programs](#porting-whole-programs)
 - [Writing a port](#writing-a-port)
@@ -77,12 +80,25 @@ All numbers below were measured on one machine: AMD Ryzen 7 5700X, 32 GB RAM, Wi
 
 A JIT is a strong baseline. The first `fuzzyScore` port matched every case but ran 2.6x *slower* than V8 (164 ns per call), because it converted both strings to UTF-16 buffers on every call. Profiling showed the conversion, not allocation, was the cost. JavaScript knows string lengths in O(1), while the port scanned whole strings to learn them. The final port streams UTF-16 units straight from the UTF-8 input, with an inline ASCII fast path, and drops the redundant length check. That brought it to 31.6 ns. The recorded cases stayed 288/288 green throughout, which is what made the rewrite safe. The story is in [examples/fuzzy-js](examples/fuzzy-js).
 
+**The workflow**, when nothing changed since the last run (the common case in an edit, diff, edit loop). Median of 9 interleaved runs, with the interquartile range; `python bench/e2e.py --baseline v0.1.1 --runs 9`:
+
+| Command | v0.1.1 | Now |
+| --- | --- | --- |
+| `diff fuzzyScore` | 142.8 ms [140–153] | 20.0 ms [20–21] |
+| `gate fuzzyScore` | 267.8 ms [267–274] | 23.7 ms [23–25] |
+| `record fuzzyScore` (Node) | 95.4 ms [93–101] | 58.6 ms [58–62] |
+| `diff levenshtein` | 141.6 ms [140–144] | 20.5 ms [20–21] |
+| `gate levenshtein` | 272.5 ms [268–290] | 24.1 ms [23–25] |
+| `record levenshtein` (Python) | 305.9 ms [300–311] | 175.7 ms [174–187] |
+
+Most of the gain is the build cache (`diff` and `gate` no longer run `zig build` when nothing it reads changed); `record` gains from running its two verification runs in parallel.
+
 **The tool itself**:
 
 | Measurement | Result | Reproduce |
 | --- | --- | --- |
-| binary size, size-optimized, x86_64 Linux / macOS / Windows | 462 KB / 438 KB / 768 KB | `zig build release` |
-| startup, `zig-anything --version` (Windows, includes process creation) | 4.0 ms median | `python bench/startup.py -- zig-out/bin/zig-anything --version` |
+| binary size, size-optimized, x86_64 Linux / macOS / Windows | 760 KB / 732 KB / 1,068 KB | `zig build release` |
+| startup, `zig-anything --version` (Windows, includes process creation) | 4.1 ms median | `python bench/startup.py -- zig-out/bin/zig-anything --version` |
 | peak memory of a port harness running 288 cases (`fuzzyScore`) | 4.1 MB, vs 47.2 MB for Node running the original | `python bench/peakmem.py -- <command>` |
 | scan JavaScript | 137 MiB/s | `zig build microbench` |
 | scan Python | 200 MiB/s | `zig build microbench` |
@@ -90,6 +106,13 @@ A JIT is a strong baseline. The first `fuzzyScore` port matched every case but r
 | generate 1,000 random cases for 3 parameters | 0.30 ms | `zig build microbench` |
 
 ## Install
+
+**npm or pip.** Both packages contain the same prebuilt binary and nothing else:
+
+```sh
+npm install --save-dev zig-anything     # then: npx zig-anything ...
+pip install zig-anything                # then: zig-anything ...
+```
 
 **Prebuilt binaries.** Download the archive for your platform from the [releases page](https://github.com/Layfate/zig-anything/releases). Builds exist for Linux (x86_64, aarch64; static musl), macOS (x86_64, Apple Silicon) and Windows (x86_64, aarch64). Put `zig-anything` on your `PATH`.
 
@@ -147,6 +170,9 @@ zig-anything gate fuzzyScore
 
 # 6. Is it faster?
 zig-anything bench fuzzyScore
+
+# 7. Switch the original's callers to the port: verified, rolled back on failure.
+zig-anything integrate fuzzyScore -- npm test
 ```
 
 `zig-anything status` lists every unit in the project with its state (`stub`, `unrecorded`, `untested`, `failing`, `stale` or `passing`), its last diff and its speedup.
@@ -159,16 +185,22 @@ zig-anything bench fuzzyScore
 | --- | --- |
 | `profile <script> [-- args]` | Run a JS/TS/Python script under its runtime's profiler (`node --cpu-prof`, `cProfile`), rank your functions by time and mark the portable ones. `--top N`, `--all`, `--json`. |
 | `scan [path]` | List top-level functions in a file or project, with inferred parameter and return types. `--all` includes non-exported functions; `--json` gives machine-readable output. |
+| `plan [path]` | Order a [whole project's migration](#migrating-a-whole-project): callees before callers, then by time. Flags blockers (async, I/O, randomness, shared state) and gives each step's next command. `--hot FILE` (from `profile --json`), `--limit N`, `--all`, `--json`. |
 | `init <file> <function>` | Create a port unit (default `zig-port/<function>/`). `--out DIR` chooses the directory. `--force` regenerates the manifest and harness; your `port.zig` and `build.zig` are never overwritten. |
-| `record <unit>` | Run the original on generated cases plus `inputs.jsonl`, twice, and write `cases.jsonl`. Cases whose results differ between the two runs are marked flaky and skipped by `diff`. Flags: `--samples N`, `--seed N`, `--max-cases N`, `--no-verify`, `--no-generate`. |
-| `build <unit>` | Compile the port and harness. `--optimize debug\|safe\|fast\|small` (default `safe`). |
-| `diff <unit>` | Build, replay every case, and report mismatches with arguments, expected and actual results. Detects crashes and points at the crashing case. Flags: `--tolerance X`, `--strict-errors`, `--limit N`, `--no-build`, `--json`. |
+| `record <unit>` | Run the original on generated cases plus `inputs.jsonl` (and `inputs.fuzz.jsonl`), twice, and write `cases.jsonl` and `recording.json`. Cases whose results differ between the two runs are marked flaky and skipped by `diff`. Flags: `--samples N`, `--seed N`, `--max-cases N`, `--no-verify`, `--no-generate`, `--effects` (also record argument mutation and printed output), `--sandbox` (block file writes, subprocesses and network), `--check` (fail if re-recording would change anything; writes nothing), `--jobs N`. |
+| `fuzz <unit>` | Mutate recorded inputs and keep the ones that reach new code in the original, in `inputs.fuzz.jsonl` for the next `record`. `--rounds N`, `--batch N`, `--seed N`, `--max-new N`, `--sandbox`, `--json`. |
+| `build <unit>` | Compile the port and harness. `--optimize debug\|safe\|fast\|small` (default `safe`). Skipped when nothing it reads changed. |
+| `diff <unit>` | Build, replay every case, and report mismatches with arguments, expected and actual results. A crash or hang is reported on its case and the rest still run. Flags: `--tolerance X`, `--strict-errors`, `--limit N`, `--case 3,17`, `--effects`, `--jobs N`, `--no-build`, `--json`. |
 | `bench <unit>` | Time the original against the port (built with `-Doptimize=fast`) on the recorded inputs and give a verdict. Flags: `--runs N`, `--target-ms MS`, `--json`. |
 | `gate <unit>` | Every check must pass: port written, cases recorded, builds, `zig build test` passes, every case matches. `--bench` also requires the port to be at least as fast. |
-| `status [dir]` | Overview of all units. `--json` is available. |
-| `bridge <unit>` | Make a finished port callable from the original code: WebAssembly + `index.mjs` (+ `index.d.ts`) for JS/TS, a native library + `port.py` for Python. Replays every recorded case through the binding. `--optimize MODE`, `--no-verify`. |
+| `status [dir]` | Overview of all units, including which are integrated. `--json` is available. |
+| `bridge <unit>` | Make a finished port callable from the original code: a native Node-API addon + WebAssembly + `index.mjs` (+ `index.d.ts`) for JS/TS, a native library + `port.py` for Python. Replays every recorded case through every backend. `--optimize MODE`, `--no-native`, `--no-verify`. |
+| `integrate <unit> [-- test command]` | Rewrite the original source so callers run the port, verify through the rewritten file (and your tests), and roll back automatically on failure. `--dry-run`, `--rollback`, `--force`, `--no-native`. |
 | `init-cli <name> -- <command...>` | Create a [program unit](#porting-whole-programs) for a whole command-line program in any language. `--cwd DIR`, `--out DIR`, `--force`. |
+| `setup-agent` | Register the MCP server with Claude Code (`.mcp.json`), Cursor and VS Code in this project, merging with existing configuration. `--client NAME`, `--agents-md`, `--dry-run`. |
 | `mcp` | Serve the commands as MCP tools over stdio. `--print-config` prints a registration snippet. |
+
+Global flags: `--no-color`, `--color`, `--no-cache` (always run the compiler).
 
 A `<unit>` is a unit directory (`zig-port/slugify`) or just its name (`slugify`), which is looked up in the configured units directory.
 
@@ -215,23 +247,57 @@ Every parameter is driven through its whole pool while the others hold typical v
 
 | Situation | Result |
 | --- | --- |
-| both returned values | match if semantically equal: numbers by value (`--tolerance` for floats), objects ignoring key order, arrays element by element |
+| both returned values | match if semantically equal: numbers by value (`--tolerance` for floats), objects ignoring key order, arrays element by element. JavaScript integers compare as doubles (as JavaScript stores them); Python integers compare exactly |
 | original threw, port returned an error | match (`--strict-errors` also requires equal names, e.g. `error.RangeError` for a `RangeError`) |
 | one threw, the other did not | mismatch |
-| port crashed | mismatch on that case; the remaining cases are reported as not run |
+| recorded with `--effects` | the arguments after the call and the printed output must match too |
+| port crashed or hung | mismatch on that case; the harness restarts after it and the remaining cases still run |
 | result flaky across the two recording runs | skipped and reported |
 
 **Value encoding.** Results travel as JSON. Non-finite floats are written as `{"$num":"NaN"}`, `{"$num":"Infinity"}` or `{"$num":"-Infinity"}`. `undefined` becomes `null`. `Map` and `Set` become objects and arrays, `Date` an ISO string, and Python tuples become arrays. Values JSON cannot carry (functions, symbols, BigInt) are flagged by `record`.
 
 More detail is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## Migrating a whole project
+
+```text
+$ cd tests/fixtures
+$ zig-anything plan .            # add --hot hot.json (from `profile --json`) for a TIME column
+migration plan for .: 13 function(s) in 6 file(s); 0 done, 10 ready, 3 to review, 0 blocked
+
+  #  FUNCTION         WHERE                WAVE   TIME LINES  STATE    NOTES
+  1  clamp            js/textutil.mjs:10      0      -     1  ready
+  2  count            cli/wc.py:5             0      -     2  ready
+  ...
+ 11  saveNote         js/vec.mjs:10           0      -     4  review   untyped parameter (std.json.Value); file I/O
+ 12  save_note        py/effects.py:4         0      -     4  review   file I/O
+ 13  main             cli/wc.py:9             1      -    26  review   untyped parameter (std.json.Value); file I/O; prints (record with --effects); reads process state; calls count
+
+next: zig-anything init js/textutil.mjs clamp
+```
+
+`plan` puts every function after the project functions it calls (wave 0 calls none of them), so each port can be finished, bridged and integrated on its own while the rest of the code keeps running. Within a wave, hot functions come first when you pass `--hot hot.json`, then ready ones, then small ones. Functions that are async or variadic are `blocked` (wrap them in a synchronous function first). Those with untyped parameters, I/O, clock reads, randomness or shared state are marked `review`: record them with `--sandbox` or `--effects`, or wrap them. Existing units show their state, and the plan gives the next command for each step.
+
+Then, per function:
+
+```sh
+zig-anything init src/text.mjs normalize
+zig-anything record normalize
+zig-anything fuzz normalize && zig-anything record normalize   # inputs that reach new code
+# write zig-port/normalize/src/port.zig until `diff` is green
+zig-anything gate normalize
+zig-anything integrate normalize -- npm test
+```
+
+`integrate` builds and verifies the bridge, backs up the source file (`zig-port/normalize/integration/`) and rewrites it. In an ES module, the function's name is imported from the bridge and the original is kept as `normalize__original`. In Python, the name is rebound right after the original's definition. It then replays every recorded case through the rewritten file and runs the command after `--`. If either fails, it restores the file byte for byte. `zig-anything integrate --rollback normalize` undoes it later. It refuses if the file changed since integrating, unless you pass `--force`. `--dry-run` shows the rewrite first. CommonJS files are not rewritten, because the bridge is an ES module.
+
 ## Calling the port from your code
 
 `zig-anything bridge <unit>` turns a passing port into something the original code can import today, without waiting for the rest of the migration:
 
 ```js
-// JavaScript / TypeScript: WebAssembly, loaded by Node with no build tools
-import { fuzzyScore, fuzzyScoreBatch } from './zig-port/fuzzyScore/bridge/index.mjs';
+// JavaScript / TypeScript: a native Node-API addon, with a WebAssembly fallback
+import { fuzzyScore, fuzzyScoreBatch, backend } from './zig-port/fuzzyScore/bridge/index.mjs';
 ```
 
 ```python
@@ -240,16 +306,18 @@ import { fuzzyScore, fuzzyScoreBatch } from './zig-port/fuzzyScore/bridge/index.
 levenshtein = _mod.levenshtein   # from zig-port/levenshtein/bridge/port.py
 ```
 
-The bindings keep the original name and parameters, raise matching exceptions (`RangeError`, `ValueError`, …) for errors the port returns, and are verified: `bridge` replays every recorded case through them.
+The bindings keep the original name and parameters, raise matching exceptions (`RangeError`, `ValueError`, …) for errors the port returns, copy in-place changes to array arguments back to the caller, and are verified: `bridge` replays every recorded case through them, through every backend.
 
-Each call crosses the boundary as JSON, which has a cost. Measured on the examples (same machine as [Benchmarks](#benchmarks)):
+**Node: native addon first.** `bridge` builds `port.node`, a Node-API addon for the current platform, next to the portable `port.wasm`. The addon converts arguments straight to the port's Zig types, with no JSON. A `Float64Array` (or another TypedArray whose element type matches a numeric slice parameter) is passed to the port without copying. It needs no Node headers, node-gyp or compiler other than Zig. `index.mjs` loads the addon when it can and falls back to WebAssembly otherwise. `backend` tells you which one is in use, and `ZIG_ANYTHING_BRIDGE=wasm` forces WebAssembly. The addon is built for the machine that runs `bridge`, so build it where the code runs (or rely on the fallback). **Python** loads a native library with `ctypes`, and calls cross as JSON.
 
-| | Original | Through the bridge | Batched (`…Batch` / `…_batch`) |
-| --- | --- | --- | --- |
-| `levenshtein`, Python | 48 µs per call | 6.8 µs (7x faster) | 3.1 µs (15x faster) |
-| `fuzzyScore`, Node.js | 60 ns per call | 1.8 µs (30x slower) | 1.0 µs (17x slower) |
+Per-call cost on the examples, including the call from the original language, measured with the same harness for every row (`python bench/e2e.py`; same machine as [Benchmarks](#benchmarks)):
 
-The bridge pays off when the function does real work. A 60 ns function in a JIT is cheaper than any crossing: port its caller too, or call it in batches. `bridge` warns when `bench` shows this.
+| | Original | Native addon | WebAssembly | `ctypes` |
+| --- | --- | --- | --- | --- |
+| `fuzzyScore`, Node.js | 69 ns | 145 ns | 1,806 ns | — |
+| `levenshtein`, Python | 48.4 µs | — | — | 6.8 µs (7x faster) |
+
+The native addon has about a twelfth of the WebAssembly overhead, but a 70 ns function in a JIT is still cheaper to call in place than through any crossing. The bridge pays off when the function does real work. Otherwise port its caller too, or call it in batches (`…Batch` / `…_batch` cross once for many calls). `bridge` warns when `bench` shows this.
 
 ## Porting whole programs
 
@@ -303,7 +371,12 @@ Configuration is optional. zig-anything looks for a `zig-anything.json` in the c
   "seed": 1,
   "max_cases": 2000,
   "timeout": 300,
-  "tolerance": 0
+  "tolerance": 0,
+  "jobs": 0,
+  "cache": true,
+  "effects": false,
+  "sandbox": false,
+  "env": { "TZ": "UTC" }
 }
 ```
 
@@ -315,18 +388,27 @@ Configuration is optional. zig-anything looks for a `zig-anything.json` in the c
 | `samples`, `seed`, `max_cases` | case generation |
 | `timeout` | seconds before any child process is stopped |
 | `tolerance` | default float tolerance for `diff` |
+| `jobs` | parallel processes for recording and replay (0 = one per CPU core) |
+| `cache` | skip `zig build` when nothing it reads changed (`--no-cache` overrides) |
+| `effects`, `sandbox` | defaults for `record --effects` and `record --sandbox` |
+| `env` | extra environment variables for the original, e.g. a fixed `TZ` |
 
 Environment overrides: `ZIG_ANYTHING_NODE`, `ZIG_ANYTHING_PYTHON`, `ZIG`, `NO_COLOR`. Run `zig-anything help config` to see the defaults for your platform.
 
 ## MCP server
 
-`zig-anything mcp` speaks the Model Context Protocol over stdio. It exposes eight tools: `zig_anything_scan`, `_init`, `_record`, `_build`, `_diff`, `_bench`, `_gate` and `_status`. With them, a coding agent can drive the whole loop: scan, init, record, write the port, diff until green, gate.
+`zig-anything mcp` speaks the Model Context Protocol over stdio. It exposes fourteen tools, one per command: `zig_anything_profile`, `_scan`, `_plan`, `_init`, `_init_cli`, `_record`, `_fuzz`, `_build`, `_diff`, `_bench`, `_bridge`, `_integrate`, `_gate` and `_status`. With them, a coding agent can drive a whole migration: plan, init, record, write the port, diff until green, gate, bridge, integrate.
+
+Results are kept short, because an agent pays for every token it reads. Progress lines collapse to their final state, and output longer than about 6 KB keeps its first and last lines (where the summary and the next step are) with a note of what was left out. `diff` shows 3 mismatches and `plan` 10 steps unless asked for more. Any tool call can pass `"verbose": true` for the full output.
+
+Register it with your agents in one step, from the project root:
 
 ```sh
-zig-anything mcp --print-config
+zig-anything setup-agent               # .mcp.json (Claude Code), .cursor/mcp.json, .vscode/mcp.json
+zig-anything setup-agent --agents-md   # also add the workflow to AGENTS.md
 ```
 
-That prints a snippet like this for your MCP client's configuration:
+Existing configuration files are merged, not replaced, and running it again changes nothing. For other clients, `zig-anything mcp --print-config` prints a snippet like this:
 
 ```json
 {
@@ -342,12 +424,15 @@ zig-anything is honest about what it can and cannot check:
 
 - **Languages:** JavaScript, TypeScript and Python sources. The scanners are lightweight tokenizers, not full parsers. They handle the declaration forms in common use (functions, arrow functions, `export` lists, CommonJS exports, TS overloads, Python annotations and multi-line signatures).
 - **Units are functions or whole programs.** A function unit is one top-level function with JSON-representable inputs and outputs; classes, closures, generators, callbacks and functions that mutate shared state need a wrapper function. A program unit compares stdout, stderr and exit codes, not files the program writes.
-- **Side effects are not recorded.** Only return values and thrown errors are compared. A port that prints, writes files or mutates its arguments differently is not caught.
-- **Coverage is only as good as the inputs.** Generated cases find many edge cases, but meaningful inputs for domain logic belong in `inputs.jsonl` (see [examples/fuzzy-js](examples/fuzzy-js)). A passing gate means "equal on every recorded case", not "proven equal".
+- **Side effects are recorded only on request.** By default, only return values and thrown errors are compared. `record --effects` also records argument mutation and printed output. Writes to files, the network or a database are never compared. `record --sandbox` blocks them during recording, and those cases record the blocked error. The sandbox (Node's permission model, a Python audit hook) guards against accidents in code you trust, not against hostile code.
+- **Coverage is only as good as the inputs.** Generated cases find many edge cases and `fuzz` finds inputs that reach new code, but meaningful inputs for domain logic belong in `inputs.jsonl` (see [examples/fuzzy-js](examples/fuzzy-js)). A passing gate means "equal on every recorded case", not "proven equal".
 - **Nondeterminism:** results that depend on time, randomness or I/O are detected (flaky) and skipped, not compared.
 - **TypeScript** runs through Node's native type stripping, which supports erasable syntax only (no `enum` or `namespace` declarations). Configure a loader such as `tsx` for anything else.
-- **Per-call speed is not end-to-end speed.** Calling a port through `bridge` costs about 1 µs (Node) to 3–7 µs (Python) per call, so tiny functions can get slower. `bench` and `bridge` warn when that is likely.
-- **Not supported:** recording side effects (files, network, email) of function units, whole HTTP servers, and source languages other than JavaScript, TypeScript and Python for function units.
+- **Per-call speed is not end-to-end speed.** Calling a port through `bridge` costs about 0.1 µs (Node, native addon), 2 µs (Node, WebAssembly) or 7 µs (Python) per call, so tiny functions can get slower. `bench` and `bridge` warn when that is likely.
+- **The native Node addon is built for the machine that runs `bridge`.** Elsewhere, `index.mjs` falls back to WebAssembly. Python bindings cross as JSON; there is no zero-copy path for Python yet.
+- **`plan` estimates call graphs from text.** It finds plain calls between top-level functions, not calls through methods, callbacks or dynamic dispatch, so treat its order as a strong suggestion.
+- **`integrate` rewrites ES modules, TypeScript and Python.** It refuses CommonJS files and async functions, and it rewrites only the function's definition. Code that reaches the original through other means (a re-export under another name, `module.__dict__`) keeps the original.
+- **Not supported:** comparing file, network or database effects of function units, whole HTTP servers, and source languages other than JavaScript, TypeScript and Python for function units.
 
 ## Building from source
 
@@ -360,6 +445,8 @@ zig build test                  # unit tests
 zig build e2e                   # end-to-end tests (needs node, python, zig)
 zig build microbench            # micro benchmarks of the tool's hot paths
 zig build release               # size-optimized binaries for all six targets
+python packaging/build.py --version X.Y.Z   # npm package and wheels from the release binaries
+python bench/e2e.py --baseline v0.1.1      # workflow and bridge timing against a release
 ```
 
 Source layout:
@@ -369,16 +456,21 @@ src/
 ├── main.zig        command table, help, dispatch
 ├── cli.zig         context, styled output, errors, flag parsing
 ├── config.zig      zig-anything.json
+├── adapter.zig     the language adapter table; one file per language in adapters/
 ├── scan.zig        JS/TS/Python function scanners and type inference
 ├── gen.zig         edge-case and random input generation
-├── unit.zig        unit manifest, scaffolding, builds
+├── mutate.zig      structure-aware input mutation for fuzz
+├── unit.zig        unit manifest, scaffolding, cached builds
 ├── cases.zig       cases.jsonl
 ├── runtime.zig     running the original through node/python
 ├── jsonx.zig       semantic JSON equality
-├── proc.zig        child processes
+├── hash.zig        SHA-256 content hashes (build cache, recordings, integration)
+├── proc.zig        child processes, run concurrently
 ├── mcp.zig         MCP server
-├── cmd/            scan+init, record, build+diff, bench, gate+status, bridge, program units, profile
-└── assets/         files embedded in the binary: recorders, runtime, unit build.zig
+├── cmd/            scan+init, plan, record, fuzz, build+diff, bench, gate+status, bridge,
+│                   integrate, setup-agent, program units, profile
+└── assets/         files embedded in the binary: recorders, unit runtime (rt.zig),
+                    Node-API runtime (napi.zig), bindings, unit build.zig
 ```
 
 ## Contributing

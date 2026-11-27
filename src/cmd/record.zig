@@ -2,6 +2,7 @@
 //! its behavior as cases.jsonl.
 
 const std = @import("std");
+const integrate = @import("integrate.zig");
 const json = std.json;
 const cli = @import("../cli.zig");
 const gen = @import("../gen.zig");
@@ -10,6 +11,8 @@ const cases_mod = @import("../cases.zig");
 const runtime = @import("../runtime.zig");
 const unit_mod = @import("../unit.zig");
 const program = @import("program.zig");
+const proc = @import("../proc.zig");
+const hash = @import("../hash.zig");
 const Io = std.Io;
 
 pub const flags = [_]cli.Flag{
@@ -17,12 +20,50 @@ pub const flags = [_]cli.Flag{
     .{ .name = "seed", .value = "N", .help = "random seed (default from config: 1)" },
     .{ .name = "max-cases", .value = "N", .help = "cap on generated cases (default from config: 2000)" },
     .{ .name = "no-verify", .help = "record once instead of twice (skips flaky-case detection)" },
-    .{ .name = "no-generate", .help = "only use inputs.jsonl" },
+    .{ .name = "no-generate", .help = "only use inputs.jsonl (and inputs.fuzz.jsonl)" },
+    .{ .name = "sandbox", .help = "block file writes, subprocesses and network access by the original while recording" },
+    .{ .name = "effects", .help = "also record argument mutation and printed output; diff then compares them" },
+    .{ .name = "jobs", .value = "N", .help = "parallel recorder processes (default: one per CPU core)" },
+    .{ .name = "check", .help = "re-record with the saved options and fail if the result differs (writes nothing)" },
 };
+
+/// `recording.json`: how cases.jsonl was produced. Committed next to it so a
+/// recording can be reproduced (`record --check`) and so `diff` knows which
+/// side effects were recorded.
+pub const Recording = struct {
+    schema: u32 = 1,
+    seed: u64,
+    samples: u32,
+    max_cases: u32,
+    generate: bool,
+    verify: bool,
+    effects: bool,
+    sandbox: bool,
+    cases: usize,
+    /// SHA-256 of the source file when it was recorded.
+    source_sha256: []const u8,
+    runtime: []const u8 = "",
+};
+
+pub const recording_name = "recording.json";
+
+pub fn loadRecording(c: *cli.Ctx, u: unit_mod.Unit) ?Recording {
+    const text = Io.Dir.cwd().readFileAlloc(c.io, u.path(c.arena, recording_name), c.arena, .limited(1 << 16)) catch return null;
+    return json.parseFromSliceLeaky(Recording, c.arena, text, .{ .allocate = .alloc_always, .ignore_unknown_fields = true }) catch null;
+}
+
+pub fn sourceHash(c: *cli.Ctx, u: unit_mod.Unit) []const u8 {
+    const text = Io.Dir.cwd().readFileAlloc(c.io, u.source_abs, c.arena, .unlimited) catch return "";
+    return c.arena.dupe(u8, &hash.of(text)) catch "";
+}
 
 /// Reads `inputs.jsonl`: each line is an argument array or {"args": [...]}.
 fn readUserInputs(c: *cli.Ctx, u: unit_mod.Unit, out: *std.ArrayList([]const u8)) cli.Reported!usize {
-    const p = u.path(c.arena, unit_mod.inputs_name);
+    return try readInputFile(c, u, unit_mod.inputs_name, out) + try readInputFile(c, u, unit_mod.fuzz_inputs_name, out);
+}
+
+fn readInputFile(c: *cli.Ctx, u: unit_mod.Unit, name: []const u8, out: *std.ArrayList([]const u8)) cli.Reported!usize {
+    const p = u.path(c.arena, name);
     const text = Io.Dir.cwd().readFileAlloc(c.io, p, c.arena, .limited(256 << 20)) catch |err| switch (err) {
         error.FileNotFound => return 0,
         else => return c.fail("cannot read {s}: {s}", .{ c.rel(p), @errorName(err) }),
@@ -91,20 +132,89 @@ fn hasOpaque(v: json.Value) bool {
     };
 }
 
+/// Splits the inputs into `shards` files of consecutive cases.
+fn writeShards(c: *cli.Ctx, u: unit_mod.Unit, inputs: []const []const u8, shards: usize) cli.Reported![]const []const u8 {
+    const paths = c.arena.alloc([]const u8, shards) catch return c.fail("out of memory", .{});
+    const per = (inputs.len + shards - 1) / shards;
+    for (paths, 0..) |*path, k| {
+        const lo = @min(k * per, inputs.len);
+        const hi = @min(lo + per, inputs.len);
+        var aw: Io.Writer.Allocating = .init(c.arena);
+        for (inputs[lo..hi]) |args_text| {
+            aw.writer.print("{{\"args\":{s}}}\n", .{args_text}) catch return c.fail("out of memory", .{});
+        }
+        path.* = if (shards == 1)
+            u.workPath(c.arena, "inputs.gen.jsonl")
+        else
+            u.workPath(c.arena, std.fmt.allocPrint(c.arena, "inputs.gen.{d}.jsonl", .{k}) catch return c.fail("out of memory", .{}));
+        Io.Dir.cwd().writeFile(c.io, .{ .sub_path = path.*, .data = aw.written() }) catch |err|
+            return c.fail("cannot write {s}: {s}", .{ path.*, @errorName(err) });
+    }
+    return paths;
+}
+
+/// Records every input `runs` times (concurrently, in `shards` processes per
+/// run) and returns one list of result lines per run.
+fn recordRuns(c: *cli.Ctx, u: unit_mod.Unit, inputs: []const []const u8, runs: usize, shards: usize, o: runtime.InvokeOptions) cli.Reported![]const []const []const u8 {
+    const shard_paths = try writeShards(c, u, inputs, shards);
+    const jobs = c.arena.alloc(proc.Job, runs * shards) catch return c.fail("out of memory", .{});
+    const outs = c.arena.alloc([]const u8, runs * shards) catch return c.fail("out of memory", .{});
+    for (0..runs) |run_i| for (shard_paths, 0..) |sp, k| {
+        const i = run_i * shards + k;
+        const name = if (shards == 1)
+            std.fmt.allocPrint(c.arena, "record.{d}.jsonl", .{run_i + 1})
+        else
+            std.fmt.allocPrint(c.arena, "record.{d}.{d}.jsonl", .{ run_i + 1, k });
+        outs[i] = u.workPath(c.arena, name catch return c.fail("out of memory", .{}));
+        jobs[i] = try runtime.prepare(c, u, .run, sp, outs[i], o);
+    };
+    const results = try proc.runMany(c, jobs);
+    for (results) |r| if (!r.ok) return runtime.reportFailure(c, u, r);
+    const per_run = c.arena.alloc([]const []const u8, runs) catch return c.fail("out of memory", .{});
+    for (per_run, 0..) |*lines, run_i| {
+        var all: std.ArrayList([]const u8) = .empty;
+        for (0..shards) |k| all.appendSlice(c.arena, try readLines(c, outs[run_i * shards + k])) catch return c.fail("out of memory", .{});
+        if (all.items.len != inputs.len)
+            return c.fail("recorder produced {d} results for {d} inputs", .{ all.items.len, inputs.len });
+        lines.* = all.items;
+    }
+    return per_run;
+}
+
+fn sameEffects(a: json.Value, b: json.Value) bool {
+    inline for (.{ "mut", "out" }) |key| {
+        const x = if (a == .object) a.object.get(key) else null;
+        const y = if (b == .object) b.object.get(key) else null;
+        if ((x == null) != (y == null)) return false;
+        if (x != null and !jsonx.equal(x.?, y.?, .{})) return false;
+    }
+    return true;
+}
+
 pub fn run(c: *cli.Ctx, args: cli.Parsed) !u8 {
     const u = try unit_mod.load(c, args.pos(0));
     if (u.isCli()) return program.record(c, u, args);
+    try integrate.refuseIfIntegrated(c, u, "recording");
     const cfg = u.cfg.config;
+    const check = args.has("check");
+    // --check replays the saved options unless flags override them.
+    const saved: ?Recording = if (check) loadRecording(c, u) else null;
+    if (check and saved == null) c.warn("no {s} in {s}; checking with the current options", .{ recording_name, c.rel(u.dir) });
     const opts: gen.Options = .{
-        .samples = try cli.parseInt(u32, c, args, "samples", cfg.samples),
-        .seed = try cli.parseInt(u64, c, args, "seed", cfg.seed),
-        .max_cases = try cli.parseInt(u32, c, args, "max-cases", cfg.max_cases),
+        .samples = try cli.parseInt(u32, c, args, "samples", if (saved) |r| r.samples else cfg.samples),
+        .seed = try cli.parseInt(u64, c, args, "seed", if (saved) |r| r.seed else cfg.seed),
+        .max_cases = try cli.parseInt(u32, c, args, "max-cases", if (saved) |r| r.max_cases else cfg.max_cases),
     };
+    const generate = !args.has("no-generate") and (if (saved) |r| r.generate else true);
+    const verify = !args.has("no-verify") and (if (saved) |r| r.verify else true);
+    const effects = args.has("effects") or cfg.effects or (if (saved) |r| r.effects else false);
+    const sandbox = args.has("sandbox") or cfg.sandbox or (if (saved) |r| r.sandbox else false);
+    const jobs = try cli.jobCount(c, args, cfg.jobs);
 
     var inputs: std.ArrayList([]const u8) = .empty;
     const user_count = try readUserInputs(c, u, &inputs);
     var generated: usize = 0;
-    if (!args.has("no-generate")) {
+    if (generate) {
         const g = gen.generate(c.arena, u.manifest.params, opts) catch return c.fail("out of memory", .{});
         generated = g.len;
         inputs.appendSlice(c.arena, g) catch return c.fail("out of memory", .{});
@@ -112,39 +222,28 @@ pub fn run(c: *cli.Ctx, args: cli.Parsed) !u8 {
     if (inputs.items.len == 0) return c.fail("no inputs: add lines to {s} or drop --no-generate", .{c.rel(u.path(c.arena, unit_mod.inputs_name))});
 
     try u.ensureWorkDir(c);
-    const in_path = u.workPath(c.arena, "inputs.gen.jsonl");
-    {
-        var aw: Io.Writer.Allocating = .init(c.arena);
-        for (inputs.items) |args_text| {
-            aw.writer.writeAll("{\"args\":") catch return c.fail("out of memory", .{});
-            aw.writer.writeAll(args_text) catch return c.fail("out of memory", .{});
-            aw.writer.writeAll("}\n") catch return c.fail("out of memory", .{});
-        }
-        Io.Dir.cwd().writeFile(c.io, .{ .sub_path = in_path, .data = aw.written() }) catch |err|
-            return c.fail("cannot write {s}: {s}", .{ in_path, @errorName(err) });
+    if (!check) {
+        c.print("recording {s}{s}{s} via {s}: {d} inputs ({d} from inputs.jsonl, {d} generated){s}\n", .{
+            c.s(.bold),                         u.manifest.function, c.s(.reset), runtime.runtimeLabel(u), inputs.items.len, user_count, generated,
+            if (sandbox) ", sandboxed" else "",
+        });
+        c.out.flush() catch {};
     }
 
-    c.print("recording {s}{s}{s} via {s}: {d} inputs ({d} from inputs.jsonl, {d} generated)\n", .{
-        c.s(.bold), u.manifest.function, c.s(.reset), runtime.runtimeLabel(u), inputs.items.len, user_count, generated,
-    });
-    c.out.flush() catch {};
-
-    const verify = !args.has("no-verify");
-    const out1 = u.workPath(c.arena, "record.1.jsonl");
-    const r1 = try runtime.invoke(c, u, .run, in_path, out1, 1);
-    if (!r1.ok) return runtime.reportFailure(c, u, r1);
-    const lines1 = try readLines(c, out1);
-    if (lines1.len != inputs.items.len)
-        return c.fail("recorder produced {d} results for {d} inputs", .{ lines1.len, inputs.items.len });
-    var lines2: []const []const u8 = &.{};
-    if (verify) {
-        const out2 = u.workPath(c.arena, "record.2.jsonl");
-        const r2 = try runtime.invoke(c, u, .run, in_path, out2, 1);
-        if (!r2.ok) return runtime.reportFailure(c, u, r2);
-        lines2 = try readLines(c, out2);
-        if (lines2.len != inputs.items.len)
-            return c.fail("second recording produced {d} results for {d} inputs", .{ lines2.len, inputs.items.len });
-    }
+    // Both verification runs go in parallel; big recordings are also split
+    // into shards of consecutive cases, one process each.
+    const runs: usize = if (verify) 2 else 1;
+    const shards: usize = if (jobs <= 1) 1 else std.math.clamp((inputs.items.len + 511) / 512, 1, @max(1, jobs / runs));
+    const recorded = if (jobs <= 1 and verify) blk: {
+        // Sequential on request (--jobs 1): the original may not tolerate
+        // running twice at the same time.
+        const r1 = try recordRuns(c, u, inputs.items, 1, 1, .{ .sandbox = sandbox, .effects = effects });
+        const first = c.arena.dupe([]const u8, r1[0]) catch return c.fail("out of memory", .{});
+        const r2 = try recordRuns(c, u, inputs.items, 1, 1, .{ .sandbox = sandbox, .effects = effects });
+        break :blk &[_][]const []const u8{ first, r2[0] };
+    } else try recordRuns(c, u, inputs.items, runs, shards, .{ .sandbox = sandbox, .effects = effects });
+    const lines1 = recorded[0];
+    const lines2: []const []const u8 = if (verify) recorded[1] else &.{};
 
     var aw: Io.Writer.Allocating = .init(c.gpa);
     defer aw.deinit();
@@ -153,6 +252,8 @@ pub fn run(c: *cli.Ctx, args: cli.Parsed) !u8 {
     var n_err: usize = 0;
     var n_flaky: usize = 0;
     var n_opaque: usize = 0;
+    var n_effects: usize = 0;
+    var n_blocked: usize = 0;
     var kinds: std.StringArrayHashMapUnmanaged(usize) = .empty;
     var err_kinds: std.StringArrayHashMapUnmanaged(usize) = .empty;
     for (inputs.items, lines1, 0..) |args_text, line, i| {
@@ -162,9 +263,11 @@ pub fn run(c: *cli.Ctx, args: cli.Parsed) !u8 {
         if (verify) {
             const v2 = json.parseFromSliceLeaky(json.Value, c.arena, lines2[i], .{}) catch
                 return c.fail("second recording line {d} is not valid JSON", .{i + 1});
-            flaky = !sameOutcome(v1, v2);
+            flaky = !sameOutcome(v1, v2) or (effects and !sameEffects(v1, v2));
         }
         if (flaky) n_flaky += 1;
+        if (v1 == .object and (v1.object.get("mut") != null or v1.object.get("out") != null)) n_effects += 1;
+        if (v1 == .object and v1.object.get("blocked") != null) n_blocked += 1;
         if (errName(v1)) |e| {
             n_err += 1;
             const gop = err_kinds.getOrPut(c.arena, e) catch return c.fail("out of memory", .{});
@@ -181,44 +284,98 @@ pub fn run(c: *cli.Ctx, args: cli.Parsed) !u8 {
         try w.writeAll("}\n");
     }
     const cases_path = u.path(c.arena, unit_mod.cases_name);
-    // Leave an identical recording untouched: no mtime churn, no VCS noise,
-    // and `status` keeps trusting the last diff.
     const previous = Io.Dir.cwd().readFileAlloc(c.io, cases_path, c.arena, .unlimited) catch null;
     const unchanged = previous != null and std.mem.eql(u8, previous.?, aw.written());
+
+    if (check) return reportCheck(c, u, previous, aw.written());
+
+    // Leave an identical recording untouched: no mtime churn, no VCS noise,
+    // and `status` keeps trusting the last diff.
     if (!unchanged) {
         Io.Dir.cwd().writeFile(c.io, .{ .sub_path = cases_path, .data = aw.written() }) catch |err|
             return c.fail("cannot write {s}: {s}", .{ cases_path, @errorName(err) });
     }
+    const rec: Recording = .{
+        .seed = opts.seed,
+        .samples = opts.samples,
+        .max_cases = opts.max_cases,
+        .generate = generate,
+        .verify = verify,
+        .effects = effects,
+        .sandbox = sandbox,
+        .cases = inputs.items.len,
+        .source_sha256 = sourceHash(c, u),
+        .runtime = runtimeVersion(c, u),
+    };
+    writeIfChanged(c, u.path(c.arena, recording_name), std.json.Stringify.valueAlloc(c.arena, rec, .{ .whitespace = .indent_2 }) catch "");
 
     c.print("{s}recorded{s} {d} cases -> {s}{s}\n", .{ c.s(.green), c.s(.reset), inputs.items.len, c.rel(cases_path), if (unchanged) " (unchanged)" else "" });
     c.print("  returned  {d}", .{n_ok});
-    if (kinds.count() > 0) {
-        c.print("  (", .{});
-        var it = kinds.iterator();
-        var first = true;
-        while (it.next()) |e| {
-            c.print("{s}{s} {d}", .{ if (first) "" else ", ", e.key_ptr.*, e.value_ptr.* });
-            first = false;
-        }
-        c.print(")", .{});
-    }
+    printKinds(c, kinds);
     c.print("\n  threw     {d}", .{n_err});
-    if (err_kinds.count() > 0) {
-        c.print("  (", .{});
-        var it = err_kinds.iterator();
-        var first = true;
-        while (it.next()) |e| {
-            c.print("{s}{s} {d}", .{ if (first) "" else ", ", e.key_ptr.*, e.value_ptr.* });
-            first = false;
-        }
-        c.print(")", .{});
-    }
+    printKinds(c, err_kinds);
     c.print("\n", .{});
     if (verify) c.print("  flaky     {d}{s}\n", .{ n_flaky, if (n_flaky > 0) " (results differed between two runs; diff skips them)" else "" });
+    if (effects) c.print("  effects   {d} case(s) mutated arguments or printed output; diff compares them\n", .{n_effects});
+    if (n_blocked > 0) c.warn("{d} case(s) tried a file write, subprocess or network call that the sandbox blocked; their results include the blocked error", .{n_blocked});
     if (n_opaque > 0) c.warn("{d} result(s) contain functions, symbols or BigInts that JSON cannot carry; those cases cannot match", .{n_opaque});
     if (n_flaky * 2 > inputs.items.len) c.warn("most results are nondeterministic (time, randomness or I/O?); the recording is weak evidence", .{});
     if (u.manifest.returns == null and kinds.count() == 1 and n_err < inputs.items.len and unit_mod.portIsStub(c, u)) {
         c.hint("every call returned {s}; consider making that the port's return type", .{kinds.keys()[0]});
     }
     return 0;
+}
+
+fn printKinds(c: *cli.Ctx, kinds: std.StringArrayHashMapUnmanaged(usize)) void {
+    if (kinds.count() == 0) return;
+    c.print("  (", .{});
+    for (kinds.keys(), kinds.values(), 0..) |k, v, i| c.print("{s}{s} {d}", .{ if (i == 0) "" else ", ", k, v });
+    c.print(")", .{});
+}
+
+fn writeIfChanged(c: *cli.Ctx, p: []const u8, data: []const u8) void {
+    const current = Io.Dir.cwd().readFileAlloc(c.io, p, c.arena, .limited(1 << 20)) catch "";
+    const text = std.mem.concat(c.arena, u8, &.{ data, "\n" }) catch return;
+    if (std.mem.eql(u8, current, text)) return;
+    Io.Dir.cwd().writeFile(c.io, .{ .sub_path = p, .data = text }) catch {};
+}
+
+/// The recorder writes `<runtime> <version>` to .za/runtime.txt.
+fn runtimeVersion(c: *cli.Ctx, u: unit_mod.Unit) []const u8 {
+    const p = u.workPath(c.arena, "runtime.txt");
+    const text = Io.Dir.cwd().readFileAlloc(c.io, p, c.arena, .limited(4096)) catch return "";
+    return std.mem.trim(u8, text, " \r\n");
+}
+
+/// `record --check`: compares a fresh recording with cases.jsonl.
+fn reportCheck(c: *cli.Ctx, u: unit_mod.Unit, previous: ?[]const u8, fresh: []const u8) cli.Reported!u8 {
+    const old = previous orelse {
+        c.print("{s}not reproducible{s}: {s} has no cases.jsonl yet\n", .{ c.s(.red), c.s(.reset), c.rel(u.dir) });
+        return 1;
+    };
+    if (std.mem.eql(u8, old, fresh)) {
+        var n: usize = 0;
+        var it: cases_mod.LineIterator = .{ .rest = fresh };
+        while (it.next()) |_| n += 1;
+        c.print("{s}reproducible{s}: re-recording gives the same {d} cases byte for byte  [{s}]\n", .{ c.s(.green), c.s(.reset), n, c.rel(u.dir) });
+        return 0;
+    }
+    const a = cases_mod.parseCases(c.arena, old) catch &.{};
+    const b = cases_mod.parseCases(c.arena, fresh) catch &.{};
+    var changed: usize = 0;
+    var shown: usize = 0;
+    const common = @min(a.len, b.len);
+    for (a[0..common], b[0..common]) |x, y| {
+        if (std.mem.eql(u8, x.raw, y.raw)) continue;
+        changed += 1;
+        if (shown < 5) {
+            shown += 1;
+            c.print("case {d} changed\n  was  {s}\n  now  {s}\n", .{ x.id, jsonx.truncate(c.arena, x.raw, 200) catch x.raw, jsonx.truncate(c.arena, y.raw, 200) catch y.raw });
+        }
+    }
+    c.print("{s}not reproducible{s}: {d} case(s) changed, {d} added, {d} removed  [{s}]\n", .{
+        c.s(.red), c.s(.reset), changed, b.len -| a.len, a.len -| b.len, c.rel(u.dir),
+    });
+    c.hint("the source, the inputs, the runtime or the generator changed since recording; run `zig-anything record` to accept the new behavior", .{});
+    return 1;
 }

@@ -6,3 +6,4 @@ zig-out-fast/
 *.pdb
 __pycache__/
 node_modules/
+dist-packages/

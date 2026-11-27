@@ -176,6 +176,166 @@ fn programWorkflow(c: *Ctx) !void {
     expect(c, "bench times whole processes", r, 0, "verdict:");
 }
 
+/// Runs any program (node, python) and returns its exit code and output.
+fn runTool(c: *Ctx, cwd: []const u8, argv: []const []const u8) !Result {
+    const r = try std.process.run(c.a, c.io, .{ .argv = argv, .cwd = .{ .path = cwd }, .create_no_window = false });
+    const code: u8 = switch (r.term) {
+        .exited => |x| x,
+        else => 255,
+    };
+    return .{ .code = code, .out = try std.mem.concat(c.a, u8, &.{ r.stdout, r.stderr }) };
+}
+
+const python_exe = if (builtin.os.tag == .windows) "python" else "python3";
+
+/// Names of the files in `dir`, sorted, ignoring __pycache__.
+fn listing(c: *Ctx, dir_path: []const u8) []const u8 {
+    var dir = Io.Dir.cwd().openDir(c.io, dir_path, .{ .iterate = true }) catch return "";
+    defer dir.close(c.io);
+    var names: std.ArrayList([]const u8) = .empty;
+    var it = dir.iterate();
+    while (it.next(c.io) catch null) |e| {
+        if (std.mem.eql(u8, e.name, "__pycache__")) continue;
+        names.append(c.a, c.a.dupe(u8, e.name) catch @panic("OOM")) catch @panic("OOM");
+    }
+    std.mem.sort([]const u8, names.items, {}, struct {
+        fn lt(_: void, x: []const u8, y: []const u8) bool {
+            return std.mem.lessThan(u8, x, y);
+        }
+    }.lt);
+    return std.mem.join(c.a, ",", names.items) catch @panic("OOM");
+}
+
+/// Side effects, the native bridge, the sandbox and reproducibility.
+fn advanced(c: *Ctx) !void {
+    std.debug.print("side effects and the native bridge\n", .{});
+    var r = try cli(c, c.work, &.{ "init", "js/vec.mjs", "scaleInPlace" });
+    expect(c, "init a function that mutates its argument", r, 0, "created");
+    r = try cli(c, c.work, &.{ "record", "scaleInPlace", "--effects" });
+    expect(c, "record --effects", r, 0, "recorded");
+    const cases_text = Io.Dir.cwd().readFileAlloc(c.io, join(c, &.{ c.work, "zig-port", "scaleInPlace", "cases.jsonl" }), c.a, .unlimited) catch "";
+    check(c, "recorded cases include argument mutation", std.mem.indexOf(u8, cases_text, "\"mut\":") != null, r);
+    const port_path = join(c, &.{ c.work, "zig-port", "scaleInPlace", "src", "port.zig" });
+    try copyFile(c, join(c, &.{ c.work, "solutions", "scale_no_mutation.zig" }), port_path);
+    r = try cli(c, c.work, &.{ "diff", "scaleInPlace", "--limit", "1" });
+    expect(c, "diff catches a port that forgets to mutate", r, 1, "arguments differ after the call");
+    try copyFile(c, join(c, &.{ c.work, "solutions", "scale_in_place.zig" }), port_path);
+    r = try cli(c, c.work, &.{ "diff", "scaleInPlace" });
+    expect(c, "diff compares mutation and passes", r, 0, "cases match");
+    r = try cli(c, c.work, &.{ "bridge", "scaleInPlace" });
+    expect(c, "bridge builds and verifies the native addon", r, 0, "recorded cases match through the bridge (native addon)");
+    check(c, "bridge also verifies the WebAssembly fallback", r.code == 0 and std.mem.indexOf(u8, r.out, "(WebAssembly)") != null, r);
+    for ([_][]const u8{ "native", "wasm" }) |backend| {
+        r = try runTool(c, c.work, &.{ "node", "js/bridge_check.mjs", backend });
+        const want = try std.fmt.allocPrint(c.a, "{{\"backend\":\"{s}\",\"n\":3,\"plain\":[2,4,6],\"typed\":[2,4,6],\"ints\":[2,4,6],\"inBatch\":[15],\"batch\":[1,0],\"badArg\":\"threw\"}}", .{backend});
+        const label = try std.fmt.allocPrint(c.a, "{s} bridge: mutation reaches arrays and typed arrays; bad arguments throw", .{backend});
+        expect(c, label, r, 0, want);
+    }
+    r = try cli(c, c.work, &.{ "bridge", "scaleInPlace", "--no-native" });
+    check(c, "bridge --no-native builds only WebAssembly", r.code == 0 and std.mem.indexOf(u8, r.out, "(native addon)") == null and
+        (Io.Dir.cwd().access(c.io, join(c, &.{ c.work, "zig-port", "scaleInPlace", "bridge", "port.node" }), .{}) catch null) == null, r);
+
+    r = try cli(c, c.work, &.{ "init", "py/effects.py", "scale_in_place" });
+    expect(c, "python: init a mutating function", r, 0, "created");
+    r = try cli(c, c.work, &.{ "record", "scale_in_place", "--effects" });
+    expect(c, "python: record --effects", r, 0, "recorded");
+    try copyFile(c, join(c, &.{ c.work, "solutions", "scale_in_place_py.zig" }), join(c, &.{ c.work, "zig-port", "scale_in_place", "src", "port.zig" }));
+    r = try cli(c, c.work, &.{ "gate", "scale_in_place" });
+    expect(c, "python: gate passes with mutation compared", r, 0, "PASSED");
+    r = try cli(c, c.work, &.{ "bridge", "scale_in_place" });
+    expect(c, "python: bridge verifies mutation", r, 0, "recorded cases match through the bridge");
+    r = try runTool(c, c.work, &.{ python_exe, "py/bridge_check.py" });
+    expect(c, "python bridge: mutation reaches lists and floats stay floats", r, 0, "{\"n\": 3, \"xs\": [2.0, 4.0, 6.0], \"ys\": [15.0], \"floats\": true}");
+
+    std.debug.print("sandbox\n", .{});
+    const js_dir = join(c, &.{ c.work, "js" });
+    const py_dir = join(c, &.{ c.work, "py" });
+    const js_before = listing(c, js_dir);
+    const py_before = listing(c, py_dir);
+    r = try cli(c, c.work, &.{ "init", "js/vec.mjs", "saveNote" });
+    r = try cli(c, c.work, &.{ "record", "saveNote", "--sandbox", "--samples", "4" });
+    expect(c, "record --sandbox reports blocked writes (node)", r, 0, "the sandbox blocked");
+    check(c, "the sandbox kept node from writing files", std.mem.eql(u8, js_before, listing(c, js_dir)), r);
+    r = try cli(c, c.work, &.{ "init", "py/effects.py", "save_note" });
+    r = try cli(c, c.work, &.{ "record", "save_note", "--sandbox", "--samples", "4" });
+    expect(c, "record --sandbox reports blocked writes (python)", r, 0, "the sandbox blocked");
+    check(c, "the sandbox kept python from writing files", std.mem.eql(u8, py_before, listing(c, py_dir)), r);
+
+    std.debug.print("reproducibility\n", .{});
+    r = try cli(c, c.work, &.{ "record", "slugify", "--check" });
+    expect(c, "record --check confirms a reproducible recording", r, 0, "reproducible");
+    check(c, "record writes recording.json", (Io.Dir.cwd().access(c.io, join(c, &.{ c.work, "zig-port", "slugify", "recording.json" }), .{}) catch null) != null, r);
+    const slug_cases = join(c, &.{ c.work, "zig-port", "slugify", "cases.jsonl" });
+    const original = try Io.Dir.cwd().readFileAlloc(c.io, slug_cases, c.a, .unlimited);
+    const first_nl = std.mem.indexOfScalar(u8, original, '\n').?;
+    const tampered = try std.mem.concat(c.a, u8, &.{ "{\"id\":1,\"args\":[\"x\"],\"expect\":{\"ok\":\"tampered\"}}", original[first_nl..] });
+    try Io.Dir.cwd().writeFile(c.io, .{ .sub_path = slug_cases, .data = tampered });
+    r = try cli(c, c.work, &.{ "record", "slugify", "--check" });
+    expect(c, "record --check catches a changed recording", r, 1, "not reproducible");
+    const after_check = try Io.Dir.cwd().readFileAlloc(c.io, slug_cases, c.a, .unlimited);
+    check(c, "record --check writes nothing", std.mem.eql(u8, after_check, tampered), r);
+    try Io.Dir.cwd().writeFile(c.io, .{ .sub_path = slug_cases, .data = original });
+    r = try cli(c, c.work, &.{ "diff", "slugify", "--case", "3,5" });
+    expect(c, "diff --case replays chosen cases", r, 0, "2/2 cases match");
+
+    std.debug.print("plan\n", .{});
+    r = try cli(c, c.work, &.{ "plan", "." });
+    expect(c, "plan lists the project's functions", r, 0, "migration plan");
+    r = try cli(c, c.work, &.{ "plan", ".", "--json", "--limit", "0" });
+    const plan_json = std.json.parseFromSliceLeaky(std.json.Value, c.a, std.mem.trim(u8, r.out, " \r\n"), .{}) catch null;
+    var count_at: ?usize = null;
+    var main_at: ?usize = null;
+    var slugify_state: []const u8 = "";
+    if (plan_json) |pj| if (pj == .object) if (pj.object.get("steps")) |steps| for (steps.array.items, 0..) |step, i| {
+        const name = step.object.get("function").?.string;
+        if (std.mem.eql(u8, name, "count")) count_at = i;
+        if (std.mem.eql(u8, name, "main")) main_at = i;
+        if (std.mem.eql(u8, name, "slugify")) if (step.object.get("state")) |st| if (st == .string) {
+            slugify_state = st.string;
+        };
+    };
+    check(c, "plan --json is valid JSON", plan_json != null, r);
+    check(c, "plan puts a callee before its caller", count_at != null and main_at != null and count_at.? < main_at.?, r);
+    check(c, "plan shows the state of existing units", slugify_state.len > 0, r);
+
+    std.debug.print("integrate\n", .{});
+    const textutil = join(c, &.{ c.work, "js", "textutil.mjs" });
+    const js_original = try Io.Dir.cwd().readFileAlloc(c.io, textutil, c.a, .unlimited);
+    r = try cli(c, c.work, &.{ "integrate", "slugify", "--dry-run" });
+    expect(c, "integrate --dry-run shows the rewrite", r, 0, "+ import { slugify } from '../zig-port/slugify/bridge/index.mjs'");
+    const unchanged = try Io.Dir.cwd().readFileAlloc(c.io, textutil, c.a, .unlimited);
+    check(c, "integrate --dry-run changes nothing", std.mem.eql(u8, js_original, unchanged), r);
+    r = try cli(c, c.work, &.{ "integrate", "slugify", "--", "node", "-e", "process.exit(3)" });
+    expect(c, "integrate rolls back when the project's tests fail", r, 1, "rolled back");
+    const after_fail = try Io.Dir.cwd().readFileAlloc(c.io, textutil, c.a, .unlimited);
+    check(c, "the rollback restores the source byte for byte", std.mem.eql(u8, js_original, after_fail), r);
+    r = try cli(c, c.work, &.{ "integrate", "slugify", "--", "node", "-e", "import('./js/textutil.mjs').then((m) => process.exit(m.slugify('Hello World!') === 'hello-world' ? 0 : 1))" });
+    expect(c, "integrate wires the port into the source and verifies it", r, 0, "recorded cases match through the integrated");
+    r = try runTool(c, c.work, &.{ "node", "-e", "import('./js/textutil.mjs').then((m) => console.log(m.slugify('A B'), m.wordCount('a b c'), typeof m.slugify__original))" });
+    expect(c, "callers run the port; other functions are untouched", r, 0, "a-b 3 undefined");
+    r = try cli(c, c.work, &.{"status"});
+    check(c, "status marks the unit integrated", std.mem.indexOf(u8, r.out, "integrated") != null, r);
+    r = try cli(c, c.work, &.{ "integrate", "slugify" });
+    expect(c, "integrating twice is refused", r, 3, "already integrated");
+    r = try cli(c, c.work, &.{ "integrate", "--rollback", "slugify" });
+    expect(c, "integrate --rollback", r, 0, "rolled back");
+    const after_rollback = try Io.Dir.cwd().readFileAlloc(c.io, textutil, c.a, .unlimited);
+    check(c, "rollback restores the original source", std.mem.eql(u8, js_original, after_rollback), r);
+
+    const mathutil = join(c, &.{ c.work, "py", "mathutil.py" });
+    const py_original = try Io.Dir.cwd().readFileAlloc(c.io, mathutil, c.a, .unlimited);
+    r = try cli(c, c.work, &.{ "integrate", "digit_sum", "--", python_exe, "-c", "import sys; sys.path.insert(0, 'py'); import mathutil; sys.exit(0 if mathutil.digit_sum(12345) == 15 and mathutil.fizzbuzz(15) == 'FizzBuzz' else 1)" });
+    expect(c, "python: integrate verifies through the rewritten module", r, 0, "integrated digit_sum");
+    r = try cli(c, c.work, &.{ "record", "digit_sum" });
+    expect(c, "record refuses an integrated unit (it would record the port)", r, 3, "is integrated");
+    try Io.Dir.cwd().writeFile(c.io, .{ .sub_path = mathutil, .data = try std.mem.concat(c.a, u8, &.{ try Io.Dir.cwd().readFileAlloc(c.io, mathutil, c.a, .unlimited), "# a later edit\n" }) });
+    r = try cli(c, c.work, &.{ "integrate", "--rollback", "digit_sum" });
+    expect(c, "rollback refuses to discard later edits", r, 3, "changed after it was integrated");
+    r = try cli(c, c.work, &.{ "integrate", "--rollback", "digit_sum", "--force" });
+    const py_after = try Io.Dir.cwd().readFileAlloc(c.io, mathutil, c.a, .unlimited);
+    check(c, "rollback --force restores the original", r.code == 0 and std.mem.eql(u8, py_original, py_after), r);
+}
+
 fn regressions(c: *Ctx) !void {
     std.debug.print("regressions and error handling\n", .{});
     const unit_src = join(c, &.{ c.work, "zig-port", "slugify", "src", "port.zig" });
@@ -274,6 +434,7 @@ fn mcp(c: *Ctx) !void {
         \\{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"zig_anything_status","arguments":{}}}
         \\{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"zig_anything_diff","arguments":{}}}
         \\{"jsonrpc":"2.0","id":5,"method":"nope"}
+        \\{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"zig_anything_plan","arguments":{"path":"."}}}
         \\not json
         \\
     ;
@@ -285,7 +446,8 @@ fn mcp(c: *Ctx) !void {
     const out = try reader.interface.allocRemaining(c.a, .unlimited);
     _ = try child.wait(c.io);
 
-    var ids: [6]bool = @splat(false);
+    var ids: [7]bool = @splat(false);
+    var plan_text: []const u8 = "";
     var it = std.mem.tokenizeScalar(u8, out, '\n');
     var all_valid = true;
     var tool_count: usize = 0;
@@ -311,16 +473,32 @@ fn mcp(c: *Ctx) !void {
             3 => status_ok = !result.?.object.get("isError").?.bool,
             4 => diff_is_error = result.?.object.get("isError").?.bool,
             5 => method_not_found = v.object.get("error").?.object.get("code").?.integer == -32601,
+            6 => plan_text = result.?.object.get("content").?.array.items[0].object.get("text").?.string,
             else => {},
         }
     }
     check(c, "every response is JSON", all_valid, .{ .code = 0, .out = out });
     check(c, "initialize answered", ids[1], .{ .code = 0, .out = out });
-    check(c, "tools/list returns 11 tools", tool_count == 11, .{ .code = 0, .out = out });
+    check(c, "tools/list returns 14 tools", tool_count == 14, .{ .code = 0, .out = out });
     check(c, "tools/call runs a command", status_ok, .{ .code = 0, .out = out });
     check(c, "missing tool arguments are tool errors", diff_is_error, .{ .code = 0, .out = out });
     check(c, "unknown methods are rejected", method_not_found, .{ .code = 0, .out = out });
     check(c, "malformed JSON gets a parse error", parse_error, .{ .code = 0, .out = out });
+    check(c, "the plan tool returns a compact plan", std.mem.indexOf(u8, plan_text, "migration plan") != null and plan_text.len <= 6200, .{ .code = 0, .out = plan_text });
+
+    std.debug.print("agent setup\n", .{});
+    const mcp_json = join(c, &.{ c.work, ".mcp.json" });
+    try Io.Dir.cwd().writeFile(c.io, .{ .sub_path = mcp_json, .data = "{\"mcpServers\":{\"other\":{\"command\":\"x\"}}}" });
+    var r = try cli(c, c.work, &.{ "setup-agent", "--agents-md" });
+    expect(c, "setup-agent writes the client configs", r, 0, ".vscode/mcp.json");
+    const merged = Io.Dir.cwd().readFileAlloc(c.io, mcp_json, c.a, .limited(1 << 16)) catch "";
+    const mv = std.json.parseFromSliceLeaky(std.json.Value, c.a, merged, .{}) catch null;
+    const servers = if (mv) |v| v.object.get("mcpServers") else null;
+    check(c, "setup-agent keeps the other servers", servers != null and servers.?.object.get("other") != null and servers.?.object.get("zig-anything") != null, r);
+    r = try cli(c, c.work, &.{ "setup-agent", "--agents-md" });
+    expect(c, "setup-agent is idempotent", r, 0, "already set up");
+    const agents_md = Io.Dir.cwd().readFileAlloc(c.io, join(c, &.{ c.work, "AGENTS.md" }), c.a, .limited(1 << 16)) catch "";
+    check(c, "AGENTS.md gets the workflow once", std.mem.count(u8, agents_md, "zig-anything:begin") == 1, r);
 }
 
 fn examples(c: *Ctx, examples_dir: []const u8) !void {
@@ -344,6 +522,23 @@ fn examples(c: *Ctx, examples_dir: []const u8) !void {
             expect(c, label, r, 0, "PASSED");
         }
     }
+
+    // Coverage-guided fuzzing finds inputs the recording missed, record
+    // picks them up, and the finished port still passes.
+    const fuzzy = join(c, &.{ c.work, "examples", "fuzzy-js" });
+    var r = try cli(c, fuzzy, &.{ "fuzz", "fuzzyScore", "--rounds", "4", "--batch", "100" });
+    expect(c, "fuzz keeps inputs that reach new code", r, 0, "kept");
+    const kept = countLines(c, join(c, &.{ fuzzy, "zig-port", "fuzzyScore", "inputs.fuzz.jsonl" }));
+    check(c, "fuzz writes inputs.fuzz.jsonl", kept > 0, r);
+    r = try cli(c, fuzzy, &.{ "fuzz", "fuzzyScore", "--rounds", "1", "--batch", "20", "--json" });
+    const fz = std.json.parseFromSliceLeaky(std.json.Value, c.a, std.mem.trim(u8, r.out, " \r\n"), .{}) catch null;
+    check(c, "fuzz --json is valid JSON", r.code == 0 and fz != null and fz.? == .object and fz.?.object.get("features_after") != null, r);
+    const before = countLines(c, join(c, &.{ fuzzy, "zig-port", "fuzzyScore", "cases.jsonl" }));
+    r = try cli(c, fuzzy, &.{ "record", "fuzzyScore" });
+    const after = countLines(c, join(c, &.{ fuzzy, "zig-port", "fuzzyScore", "cases.jsonl" }));
+    check(c, "record adds the fuzzed inputs", r.code == 0 and after > before, r);
+    r = try cli(c, fuzzy, &.{ "gate", "fuzzyScore" });
+    expect(c, "the port still passes on the fuzzed inputs", r, 0, "PASSED");
 }
 
 pub fn main(init: std.process.Init) !u8 {
@@ -370,6 +565,7 @@ pub fn main(init: std.process.Init) !u8 {
     try workflow(&c, .{ .label = "typescript: mean", .source = "ts/stats.ts", .function = "mean", .solution = "mean.zig" });
     try workflow(&c, .{ .label = "python: digit_sum", .source = "py/mathutil.py", .function = "digit_sum", .solution = "digit_sum.zig" });
     try programWorkflow(&c);
+    try advanced(&c);
     try regressions(&c);
     try mcp(&c);
     try examples(&c, examples_dir);

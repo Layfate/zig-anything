@@ -31,6 +31,17 @@ pub const Config = struct {
     timeout: u32 = 300,
     /// Float tolerance used by `diff` (0 = exact).
     tolerance: f64 = 0,
+    /// Run the original with the side-effect guard on (see `record --sandbox`).
+    sandbox: bool = false,
+    /// Record argument mutation and printed output, and make `diff` compare
+    /// them (see `record --effects`).
+    effects: bool = false,
+    /// Parallel processes for recording and replay (0 = one per CPU core).
+    jobs: u32 = 0,
+    /// Skip `zig build` when nothing it reads has changed.
+    cache: bool = true,
+    /// Extra environment variables for the original, e.g. {"TZ": "UTC"}.
+    env: std.json.ArrayHashMap([]const u8) = .{},
 };
 
 pub const Loaded = struct {
@@ -94,4 +105,7 @@ test "parse config with defaults and overrides" {
     try std.testing.expectEqual(@as(usize, 3), cfg.node.len);
     try std.testing.expectEqualStrings("zig-port", cfg.units_dir);
     try std.testing.expectError(error.UnknownField, parse(arena.allocator(), "{\"sample\": 10}"));
+    const env = try parse(arena.allocator(), "{\"env\": {\"TZ\": \"UTC\"}, \"sandbox\": true, \"jobs\": 2}");
+    try std.testing.expectEqualStrings("UTC", env.env.map.get("TZ").?);
+    try std.testing.expect(env.sandbox and env.jobs == 2 and env.cache);
 }

@@ -49,6 +49,16 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }) });
     test_step.dependOn(&b.addRunArtifact(rt_tests).step);
+    const napi_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/assets/napi.zig"),
+            .target = target,
+            .optimize = optimize,
+            // The addon finds N-API with dlsym outside Windows.
+            .link_libc = target.result.os.tag != .windows,
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(napi_tests).step);
 
     // ---- end-to-end tests: drive the real binary through full workflows
     const e2e = b.addExecutable(.{

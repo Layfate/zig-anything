@@ -67,7 +67,22 @@ def _cross(entry, payload):
         _lib.za_free(ptr, size.value)
 
 
-def _unwrap(result):
+def _write_back(args, mut):
+    # Copies the port's changes to mutable slice parameters back into the
+    # caller's lists, as an in-place change in Python would be seen.
+    for target, value in zip(args, mut):
+        if isinstance(target, list) and isinstance(value, list):
+            # JSON prints 2.0 as 2; keep a float element a float.
+            new = _decode(value)
+            for i in range(min(len(target), len(new))):
+                if isinstance(target[i], float) and type(new[i]) is int:
+                    new[i] = float(new[i])
+            target[:] = new
+
+
+def _unwrap(result, args):
+    if "mut" in result:
+        _write_back(args, result["mut"])
     if "ok" in result:
         return _decode(result["ok"])
     name = result.get("err")
@@ -80,12 +95,13 @@ def _unwrap(result):
 
 
 def _call(args):
-    return _unwrap(json.loads(_cross(_lib.za_call, [_encode(a) for a in args])))
+    return _unwrap(json.loads(_cross(_lib.za_call, [_encode(a) for a in args])), args)
 
 
 def _call_batch(calls):
+    calls = [list(args) for args in calls]
     text = _cross(_lib.za_call_batch, [[_encode(a) for a in args] for args in calls])
-    return [_unwrap(json.loads(line)) for line in text.splitlines() if line]
+    return [_unwrap(json.loads(line), args) for line, args in zip(text.splitlines(), calls)]
 
 
 def __NAME__(__PARAMS__):

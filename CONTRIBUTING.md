@@ -28,19 +28,23 @@ CI runs all three on Linux, macOS and Windows.
 Performance claims in the README or changelog must be **measured and reproducible**:
 
 1. State the machine, OS and tool versions.
-2. Give the exact command that reproduces the number (`zig-anything bench …`, `zig build microbench`, `bench/startup.py`).
+2. Give the exact command that reproduces the number (`zig-anything bench …`, `zig build microbench`, `bench/startup.py`, `bench/e2e.py`). For a change to the tool's own speed, compare against the last release with `python bench/e2e.py --baseline <tag>`.
 3. Report medians, and report regressions honestly, including cases where a port is slower.
 
 Optimize only after profiling. Every optimization must keep `gate` green.
 
 ## Adding a source language
 
-A language needs:
+Everything language-specific sits behind the adapter table in `src/adapter.zig`. A language needs:
 
-1. a scanner in `src/scan.zig` (with tests),
-2. a recorder script in `src/assets/` that follows the run/bench protocol described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
-3. wiring in `lang.zig`, `runtime.zig` and `config.zig`,
+1. a `Language` tag and its file extensions in `lang.zig`, and a scanner in `src/scan.zig` (with tests),
+2. a recorder script in `src/assets/` that follows the run/bench/cover protocol and the `ZA_*` environment variables described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
+3. a file in `src/adapters/` that fills in an `Adapter`, one line in `adapter.forLanguage`, and its runtime command in `config.zig`,
 4. an e2e workflow with a fixture and a reference solution.
+
+## Packaging
+
+`python packaging/build.py --version X.Y.Z` turns the output of `zig build release` into the npm package (`dist-packages/npm/`) and one PyPI wheel per platform. CI builds and installs both on every push. Releases publish them when `NPM_TOKEN` and `PYPI_API_TOKEN` secrets are set. A release tag must match the version in `build.zig` and `build.zig.zon`.
 
 ## Commits and pull requests
 

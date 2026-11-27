@@ -10,6 +10,11 @@ pub const CompareOptions = struct {
     /// Absolute-or-relative tolerance for floating point comparison.
     /// 0 means "the same f64 after parsing".
     tolerance: f64 = 0,
+    /// Every number of the original is an IEEE double (JavaScript), so two
+    /// integers are equal when they are the same double: JavaScript prints
+    /// 2^56 - 8 as 72057594037927930, a Zig port as 72057594037927928.
+    /// Off for Python, whose integers are exact.
+    doubles: bool = false,
 };
 
 /// Numeric view of a JSON value, including `{"$num": ...}` tags.
@@ -53,7 +58,10 @@ fn numbersEqual(a: f64, b: f64, tol: f64) bool {
 pub fn equal(a: json.Value, b: json.Value, opts: CompareOptions) bool {
     if (isNumeric(a) and isNumeric(b)) {
         // Exact integer comparison first so large integers never lose precision.
-        if (a == .integer and b == .integer) return a.integer == b.integer;
+        if (a == .integer and b == .integer) {
+            if (opts.doubles) return @as(f64, @floatFromInt(a.integer)) == @as(f64, @floatFromInt(b.integer));
+            return a.integer == b.integer;
+        }
         if (a == .number_string and b == .number_string) {
             if (std.mem.eql(u8, a.number_string, b.number_string)) return true;
         }
@@ -175,4 +183,18 @@ test "truncate respects UTF-8 boundaries" {
     const a = arena.allocator();
     try std.testing.expectEqualStrings("abc", try truncate(a, "abc", 10));
     try std.testing.expectEqualStrings("é…", try truncate(a, "éé", 3));
+}
+
+test "integers compare as doubles for JavaScript" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // JSON.stringify(2**56 - 8) and the exact value a Zig port prints.
+    const js = try json.parseFromSliceLeaky(json.Value, a, "72057594037927930", .{});
+    const zig = try json.parseFromSliceLeaky(json.Value, a, "72057594037927928", .{});
+    try std.testing.expect(equal(js, zig, .{ .doubles = true }));
+    try std.testing.expect(!equal(js, zig, .{}));
+    const one = try json.parseFromSliceLeaky(json.Value, a, "1", .{});
+    const two = try json.parseFromSliceLeaky(json.Value, a, "2", .{});
+    try std.testing.expect(!equal(one, two, .{ .doubles = true }));
 }

@@ -8,9 +8,11 @@ const config = @import("../config.zig");
 const jsonx = @import("../jsonx.zig");
 const cases_mod = @import("../cases.zig");
 const unit_mod = @import("../unit.zig");
+const runtime = @import("../runtime.zig");
 const diff = @import("diff.zig");
 const bench = @import("bench.zig");
 const program = @import("program.zig");
+const integrate = @import("integrate.zig");
 const Io = std.Io;
 
 pub const gate_flags = [_]cli.Flag{
@@ -87,6 +89,9 @@ pub fn runGate(c: *cli.Ctx, args: cli.Parsed) !u8 {
             try diff.replay(c, u, cs, .{
                 .tolerance = try cli.parseFloat(c, args, "tolerance", u.cfg.config.tolerance),
                 .strict_errors = args.has("strict-errors"),
+                .effects = diff.effectsWanted(c, u, args),
+                .jobs = try cli.jobCount(c, args, u.cfg.config.jobs),
+                .doubles = runtime.adapterOf(u).numbers_are_doubles,
             });
         diff_ok = o.passed();
         add(c, &checks, .{
@@ -132,7 +137,7 @@ pub fn runGate(c: *cli.Ctx, args: cli.Parsed) !u8 {
 
 // ---------------------------------------------------------------- status
 
-const UnitStatus = struct {
+pub const UnitStatus = struct {
     name: []const u8,
     dir: []const u8,
     language: []const u8,
@@ -141,6 +146,8 @@ const UnitStatus = struct {
     matched: ?usize = null,
     compared: ?usize = null,
     speedup: ?f64 = null,
+    /// The port is wired into the original source (`integrate`).
+    integrated: bool = false,
 };
 
 fn countLines(text: []const u8) usize {
@@ -155,11 +162,12 @@ fn mtime(c: *cli.Ctx, p: []const u8) ?i96 {
     return st.mtime.nanoseconds;
 }
 
-fn inspect(c: *cli.Ctx, dir: []const u8) ?UnitStatus {
+pub fn inspect(c: *cli.Ctx, dir: []const u8) ?UnitStatus {
     const a = c.arena;
     const text = Io.Dir.cwd().readFileAlloc(c.io, std.fs.path.join(a, &.{ dir, unit_mod.manifest_name }) catch return null, a, .limited(1 << 20)) catch return null;
     const m = json.parseFromSliceLeaky(unit_mod.Manifest, a, text, .{ .allocate = .alloc_always, .ignore_unknown_fields = true }) catch return null;
     var s: UnitStatus = .{ .name = m.name, .dir = c.rel(dir), .language = if (m.kind == .cli) "cli" else @tagName(m.lang_()), .cases = 0, .state = "" };
+    s.integrated = integrate.isIntegrated(c, dir);
     const port_path = std.fs.path.join(a, &.{ dir, "src", if (m.kind == .cli) "main.zig" else "port.zig" }) catch return null;
     const cases_path = std.fs.path.join(a, &.{ dir, unit_mod.cases_name }) catch return null;
     const diff_path = std.fs.path.join(a, &.{ dir, unit_mod.work_dir, "last-diff.json" }) catch return null;
@@ -266,7 +274,7 @@ pub fn runStatus(c: *cli.Ctx, args: cli.Parsed) !u8 {
         const d = if (s.matched != null and s.compared != null) std.fmt.bufPrint(&db, "{d}/{d}", .{ s.matched.?, s.compared.? }) catch "-" else "-";
         const sp = if (s.speedup) |x| std.fmt.bufPrint(&sb, "{d:.1}x", .{x}) catch "-" else "-";
         const color = if (std.mem.eql(u8, s.state, "passing")) c.s(.green) else if (std.mem.eql(u8, s.state, "failing")) c.s(.red) else c.s(.yellow);
-        c.print("{s: <24} {s: <11} {d: >6}  {s}{s: <11}{s} {s: <12} {s}\n", .{ s.dir, s.language, s.cases, color, s.state, c.s(.reset), d, sp });
+        c.print("{s: <24} {s: <11} {d: >6}  {s}{s: <11}{s} {s: <12} {s: <8}{s}\n", .{ s.dir, s.language, s.cases, color, s.state, c.s(.reset), d, sp, if (s.integrated) "  integrated" else "" });
     }
     c.print("\n{d}/{d} unit(s) passing\n", .{ passing, list.items.len });
     return 0;

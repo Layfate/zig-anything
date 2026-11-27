@@ -4,6 +4,7 @@ const std = @import("std");
 const cli = @import("../cli.zig");
 const config = @import("../config.zig");
 const lang = @import("../lang.zig");
+const adapter = @import("../adapter.zig");
 const scan = @import("../scan.zig");
 const unit_mod = @import("../unit.zig");
 const jsonx = @import("../jsonx.zig");
@@ -27,9 +28,9 @@ const ignored_dirs = std.StaticStringMap(void).initComptime(.{
     .{"site-packages"},
 });
 
-const max_source_bytes = 2 << 20;
+pub const max_source_bytes = 2 << 20;
 
-const FileResult = struct {
+pub const FileResult = struct {
     path: []const u8,
     language: lang.Language,
     functions: []const lang.Function,
@@ -40,14 +41,14 @@ fn skipFile(name: []const u8) bool {
         std.mem.endsWith(u8, name, ".bundle.js");
 }
 
-fn scanFile(c: *cli.Ctx, path: []const u8) ?FileResult {
+pub fn scanFile(c: *cli.Ctx, path: []const u8) ?FileResult {
     const language = lang.Language.fromPath(path) orelse return null;
     const text = Io.Dir.cwd().readFileAlloc(c.io, path, c.arena, .limited(max_source_bytes)) catch return null;
     const fns = scan.scanSource(c.arena, language, text) catch return null;
     return .{ .path = path, .language = language, .functions = fns };
 }
 
-fn collect(c: *cli.Ctx, root: []const u8, out: *std.ArrayList(FileResult)) !void {
+pub fn collect(c: *cli.Ctx, root: []const u8, out: *std.ArrayList(FileResult)) !void {
     var dir = try Io.Dir.cwd().openDir(c.io, root, .{ .iterate = true });
     defer dir.close(c.io);
     var walker = try dir.walkSelectively(c.gpa);
@@ -180,7 +181,7 @@ pub fn runInit(c: *cli.Ctx, args: cli.Parsed) !u8 {
         if (names.items.len > 0) c.hint("run `zig-anything scan {s}` to list functions", .{file_arg});
         return c.fail("no top-level function '{s}' in {s}", .{ fn_name, file_arg });
     };
-    if (language.isJs() and !f.exported) {
+    if (adapter.forLanguage(language).requires_export and !f.exported) {
         c.hint("the recorder imports the module, so add `export` to `{s}` (or list it in module.exports)", .{fn_name});
         return c.fail("'{s}' is not exported from {s}", .{ fn_name, file_arg });
     }

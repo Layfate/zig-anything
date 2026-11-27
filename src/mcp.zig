@@ -22,6 +22,8 @@ const Arg = struct {
     /// `array` (of strings) is passed after `--`, at the end of the command line.
     kind: enum { string, number, boolean, array } = .string,
     required: bool = false,
+    /// Passed when the caller leaves the argument out (keeps output short).
+    default: ?[]const u8 = null,
     help: []const u8,
 };
 
@@ -34,57 +36,81 @@ const Tool = struct {
 
 const unit_arg: Arg = .{ .prop = "unit", .required = true, .help = "Unit directory, or unit name inside the configured units directory" };
 
+// Descriptions are short on purpose: the tool list is sent to the model in
+// every session, so each word costs tokens every time.
 const tools = [_]Tool{
-    .{ .name = "zig_anything_profile", .command = "profile", .description = "Run a JS/TS/Python script under its runtime's profiler and rank the functions in the project by time, marking which ones can be ported.", .args = &.{
+    .{ .name = "zig_anything_profile", .command = "profile", .description = "Run a JS/TS/Python script under its profiler; rank project functions by time and mark the portable ones.", .args = &.{
         .{ .prop = "script", .required = true, .help = "Script to run" },
-        .{ .prop = "args", .kind = .array, .help = "Arguments for the script" },
+        .{ .prop = "args", .kind = .array, .help = "Script arguments" },
         .{ .prop = "top", .flag = "--top", .kind = .number, .help = "Functions to show" },
     } },
-    .{ .name = "zig_anything_scan", .command = "scan", .description = "List top-level functions (with inferred parameter types) in a JS/TS/Python file or project that can be ported to Zig.", .args = &.{
-        .{ .prop = "path", .help = "File or directory to scan (default: current directory)" },
-        .{ .prop = "all", .flag = "--all", .kind = .boolean, .help = "Include functions that are not exported" },
+    .{ .name = "zig_anything_scan", .command = "scan", .description = "List portable top-level functions with inferred parameter types.", .args = &.{
+        .{ .prop = "path", .help = "File or directory (default: .)" },
+        .{ .prop = "all", .flag = "--all", .kind = .boolean, .help = "Include unexported functions" },
     } },
-    .{ .name = "zig_anything_init", .command = "init", .description = "Create a port unit for one function: manifest, Zig port stub, harness and build files.", .args = &.{
-        .{ .prop = "file", .required = true, .help = "Source file containing the function" },
+    .{ .name = "zig_anything_plan", .command = "plan", .description = "Order a project's migration: callees before callers, hot code first; flags blockers and gives the next command per step.", .args = &.{
+        .{ .prop = "path", .help = "File or directory (default: .)" },
+        .{ .prop = "hot", .flag = "--hot", .help = "Output of `profile --json`, to weight by time" },
+        .{ .prop = "limit", .flag = "--limit", .kind = .number, .default = "10", .help = "Steps to show (default 10, 0 = all)" },
+        .{ .prop = "all", .flag = "--all", .kind = .boolean, .help = "Include unexported functions" },
+    } },
+    .{ .name = "zig_anything_init", .command = "init", .description = "Create a port unit for one function (manifest, port.zig stub, harness).", .args = &.{
+        .{ .prop = "file", .required = true, .help = "Source file" },
         .{ .prop = "function", .required = true, .help = "Function name" },
-        .{ .prop = "out", .flag = "--out", .help = "Unit directory (optional)" },
-        .{ .prop = "force", .flag = "--force", .kind = .boolean, .help = "Regenerate manifest/harness of an existing unit; port.zig is kept" },
+        .{ .prop = "out", .flag = "--out", .help = "Unit directory" },
+        .{ .prop = "force", .flag = "--force", .kind = .boolean, .help = "Regenerate manifest/harness; port.zig is kept" },
     } },
-    .{ .name = "zig_anything_init_cli", .command = "init-cli", .description = "Create a program unit for a whole command-line program in any language; its invocations go in inputs.jsonl and the Zig rewrite in src/main.zig.", .args = &.{
+    .{ .name = "zig_anything_init_cli", .command = "init-cli", .description = "Create a program unit for a whole command-line program (invocations in inputs.jsonl, rewrite in src/main.zig).", .args = &.{
         .{ .prop = "name", .required = true, .help = "Unit name" },
-        .{ .prop = "command", .kind = .array, .required = true, .help = "The original program and leading arguments, e.g. [\"python\", \"tools/wc.py\"]" },
+        .{ .prop = "command", .kind = .array, .required = true, .help = "Original program and leading args, e.g. [\"python\",\"wc.py\"]" },
         .{ .prop = "cwd", .flag = "--cwd", .help = "Working directory for both programs" },
-        .{ .prop = "out", .flag = "--out", .help = "Unit directory (optional)" },
+        .{ .prop = "out", .flag = "--out", .help = "Unit directory" },
     } },
-    .{ .name = "zig_anything_record", .command = "record", .description = "Run the original function on generated edge cases plus inputs.jsonl and save its behavior to cases.jsonl. Runs the original code.", .args = &.{
+    .{ .name = "zig_anything_record", .command = "record", .description = "Run the original on edge cases + inputs.jsonl and save its behavior to cases.jsonl. Runs the original code.", .args = &.{
         unit_arg,
         .{ .prop = "samples", .flag = "--samples", .kind = .number, .help = "Random cases on top of edge cases" },
         .{ .prop = "seed", .flag = "--seed", .kind = .number, .help = "Random seed" },
+        .{ .prop = "effects", .flag = "--effects", .kind = .boolean, .help = "Also record argument mutation and printed output" },
+        .{ .prop = "sandbox", .flag = "--sandbox", .kind = .boolean, .help = "Block file writes, subprocesses and network" },
+        .{ .prop = "check", .flag = "--check", .kind = .boolean, .help = "Fail if re-recording would change cases.jsonl (writes nothing)" },
     } },
-    .{ .name = "zig_anything_build", .command = "build", .description = "Compile the unit's Zig port and harness.", .args = &.{
+    .{ .name = "zig_anything_fuzz", .command = "fuzz", .description = "Coverage-guided: mutate inputs, keep those reaching new code in the original (inputs.fuzz.jsonl); record again after.", .args = &.{
+        unit_arg,
+        .{ .prop = "rounds", .flag = "--rounds", .kind = .number, .help = "Mutation rounds (default 20)" },
+        .{ .prop = "sandbox", .flag = "--sandbox", .kind = .boolean, .help = "Block file writes, subprocesses and network" },
+    } },
+    .{ .name = "zig_anything_build", .command = "build", .description = "Compile the unit's port and harness.", .args = &.{
         unit_arg,
         .{ .prop = "optimize", .flag = "--optimize", .help = "debug, safe, fast or small" },
     } },
-    .{ .name = "zig_anything_diff", .command = "diff", .description = "Build the port and replay every recorded case against it; lists mismatches with arguments, expected and actual results.", .args = &.{
+    .{ .name = "zig_anything_diff", .command = "diff", .description = "Build the port and replay every recorded case; shows mismatches (args, expected, got).", .args = &.{
         unit_arg,
+        .{ .prop = "limit", .flag = "--limit", .kind = .number, .default = "3", .help = "Mismatches to show (default 3)" },
+        .{ .prop = "case", .flag = "--case", .help = "Only these case ids, e.g. \"3,17\"" },
         .{ .prop = "tolerance", .flag = "--tolerance", .kind = .number, .help = "Float tolerance" },
-        .{ .prop = "strict_errors", .flag = "--strict-errors", .kind = .boolean, .help = "Error names must match exactly" },
-        .{ .prop = "limit", .flag = "--limit", .kind = .number, .help = "Mismatches to show" },
+        .{ .prop = "strict_errors", .flag = "--strict-errors", .kind = .boolean, .help = "Error names must match" },
     } },
-    .{ .name = "zig_anything_bench", .command = "bench", .description = "Benchmark the original against the optimized Zig port on recorded inputs and report a verdict.", .args = &.{
+    .{ .name = "zig_anything_bench", .command = "bench", .description = "Time the original against the optimized port on recorded inputs; gives a verdict.", .args = &.{
         unit_arg,
         .{ .prop = "runs", .flag = "--runs", .kind = .number, .help = "Measured runs per side" },
     } },
-    .{ .name = "zig_anything_bridge", .command = "bridge", .description = "Make a finished port callable from the original code (WebAssembly + index.mjs for JS/TS, native library + port.py for Python) and replay every recorded case through it.", .args = &.{
+    .{ .name = "zig_anything_bridge", .command = "bridge", .description = "Make a finished port callable from the original code (native Node addon + WebAssembly, or a native library for Python) and replay every case through it.", .args = &.{
         unit_arg,
-        .{ .prop = "optimize", .flag = "--optimize", .help = "debug, safe, fast or small" },
+        .{ .prop = "no_native", .flag = "--no-native", .kind = .boolean, .help = "JS/TS: WebAssembly only" },
     } },
-    .{ .name = "zig_anything_gate", .command = "gate", .description = "Definition of done: port written, cases recorded, builds, port tests pass, every case matches (optionally not slower).", .args = &.{
+    .{ .name = "zig_anything_integrate", .command = "integrate", .description = "Rewrite the original source to call the port; verified by replaying every case (and optional tests), rolled back automatically on failure.", .args = &.{
+        unit_arg,
+        .{ .prop = "rollback", .flag = "--rollback", .kind = .boolean, .help = "Restore the original source" },
+        .{ .prop = "dry_run", .flag = "--dry-run", .kind = .boolean, .help = "Show the rewrite, change nothing" },
+        .{ .prop = "force", .flag = "--force", .kind = .boolean, .help = "With rollback: discard later edits" },
+        .{ .prop = "test_command", .kind = .array, .help = "Project tests to run after rewriting, e.g. [\"npm\",\"test\"]" },
+    } },
+    .{ .name = "zig_anything_gate", .command = "gate", .description = "Definition of done: port written, cases recorded, builds, tests pass, every case matches.", .args = &.{
         unit_arg,
         .{ .prop = "bench", .flag = "--bench", .kind = .boolean, .help = "Also require the port to be at least as fast" },
     } },
-    .{ .name = "zig_anything_status", .command = "status", .description = "Show every port unit with its state, case count, last diff and speedup.", .args = &.{
-        .{ .prop = "path", .help = "Directory to search (default: configured units directory)" },
+    .{ .name = "zig_anything_status", .command = "status", .description = "Every unit with its state, cases, last diff, speedup and integration.", .args = &.{
+        .{ .prop = "path", .help = "Directory (default: units directory)" },
     } },
 };
 
@@ -106,6 +132,8 @@ fn writeToolList(w: *Io.Writer) !void {
             try jsonx.writeString(w, a.help);
             try w.writeByte('}');
         }
+        if (t.args.len > 0) try w.writeByte(',');
+        try w.writeAll("\"verbose\":{\"type\":\"boolean\",\"description\":\"Full output instead of a compact one\"}");
         try w.writeAll("},\"required\":[");
         var first = true;
         for (t.args) |a| {
@@ -137,6 +165,7 @@ fn toolArgv(a: Allocator, self_exe: []const u8, t: Tool, arguments: ?json.Value,
                 err_msg.* = try std.fmt.allocPrint(a, "missing required argument '{s}'", .{arg.prop});
                 return error.BadArguments;
             }
+            if (arg.default) |d| try argv.appendSlice(a, &.{ arg.flag, d });
             continue;
         }
         if (arg.kind == .array) {
@@ -181,6 +210,43 @@ fn toolArgv(a: Allocator, self_exe: []const u8, t: Tool, arguments: ?json.Value,
         try argv.appendSlice(a, tail.items);
     }
     return argv.items;
+}
+
+/// Longest tool result returned without `verbose`, in bytes (~1,500 tokens).
+const max_result_bytes = 6000;
+
+/// Makes command output cheap for a model to read: progress lines that were
+/// overwritten with `\r` keep only their final state, and long output keeps
+/// its first and last lines (where commands put the summary and the next
+/// step) with a note of what was left out.
+pub fn compact(a: Allocator, text: []const u8, max: usize) ![]const u8 {
+    var lines: std.ArrayList([]const u8) = .empty;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |raw| {
+        var line = std.mem.trimEnd(u8, raw, "\r");
+        if (std.mem.lastIndexOfScalar(u8, line, '\r')) |cr| line = line[cr + 1 ..];
+        try lines.append(a, std.mem.trimEnd(u8, line, " "));
+    }
+    while (lines.items.len > 0 and lines.items[lines.items.len - 1].len == 0) _ = lines.pop();
+    const joined = try std.mem.join(a, "\n", lines.items);
+    if (joined.len <= max) return joined;
+    // Keep a head and a tail of whole lines, about a third and two thirds.
+    var head: usize = 0;
+    var used: usize = 0;
+    while (head < lines.items.len and used + lines.items[head].len + 1 <= max / 3) : (head += 1) used += lines.items[head].len + 1;
+    var tail = lines.items.len;
+    while (tail > head and used + lines.items[tail - 1].len + 1 <= max - 80) : (tail -= 1) used += lines.items[tail - 1].len + 1;
+    var out: std.ArrayList(u8) = .empty;
+    for (lines.items[0..head]) |l| {
+        try out.appendSlice(a, l);
+        try out.append(a, '\n');
+    }
+    try out.print(a, "[... {d} lines left out; call again with \"verbose\": true for everything ...]\n", .{tail - head});
+    for (lines.items[tail..], 0..) |l, i| {
+        if (i != 0) try out.append(a, '\n');
+        try out.appendSlice(a, l);
+    }
+    return out.items;
 }
 
 fn writeResponseStart(w: *Io.Writer, id: json.Value) !void {
@@ -262,7 +328,7 @@ pub fn serve(c: *cli.Ctx, version: []const u8) !u8 {
             try jsonx.writeString(w, proto);
             try w.writeAll(",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"zig-anything\",\"version\":");
             try jsonx.writeString(w, version);
-            try w.writeAll("},\"instructions\":\"Port JS/TS/Python functions to Zig one at a time: scan, init, record, implement src/port.zig, diff until every case matches, then gate.\"}}\n");
+            try w.writeAll("},\"instructions\":\"Port JS/TS/Python functions to Zig one at a time, in the order plan gives: init, record (fuzz to find more inputs), write src/port.zig, diff until every case matches, gate, then bridge and integrate. Results are compact; pass verbose: true for full output.\"}}\n");
             try w.flush();
         } else if (std.mem.eql(u8, method, "ping")) {
             try writeResponseStart(w, req_id);
@@ -297,7 +363,9 @@ pub fn serve(c: *cli.Ctx, version: []const u8) !u8 {
                 try sendToolText(w, req_id, @errorName(err), true);
                 continue;
             };
-            const text = try std.mem.concat(a, u8, &.{ result.stdout, if (result.stderr.len > 0 and result.stdout.len > 0) "\n" else "", result.stderr });
+            const full = try std.mem.concat(a, u8, &.{ result.stdout, if (result.stderr.len > 0 and result.stdout.len > 0) "\n" else "", result.stderr });
+            const verbose = if (p.object.get("arguments")) |av| (av == .object and if (av.object.get("verbose")) |vb| vb == .bool and vb.bool else false) else false;
+            const text = if (verbose) full else try compact(a, full, max_result_bytes);
             try sendToolText(w, req_id, text, !result.term.success());
         } else {
             try sendError(w, req_id, -32601, "method not found");
@@ -342,4 +410,39 @@ test "array arguments go after --" {
     const want = [_][]const u8{ "za", "--no-color", "init-cli", "wc", "--cwd", "cli", "--", "python", "wc.py" };
     try std.testing.expectEqual(want.len, argv.len);
     for (want, argv) |x, y| try std.testing.expectEqualStrings(x, y);
+}
+
+test "defaults keep results short unless overridden" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var err: []const u8 = "";
+    const d = try json.parseFromSliceLeaky(json.Value, a, "{\"unit\":\"u\"}", .{});
+    const argv = try toolArgv(a, "za", findTool("zig_anything_diff").?, d, &err);
+    const want = [_][]const u8{ "za", "--no-color", "diff", "u", "--limit", "3" };
+    try std.testing.expectEqual(want.len, argv.len);
+    for (want, argv) |x, y| try std.testing.expectEqualStrings(x, y);
+    const e = try json.parseFromSliceLeaky(json.Value, a, "{\"unit\":\"u\",\"limit\":50,\"verbose\":true}", .{});
+    const argv2 = try toolArgv(a, "za", findTool("zig_anything_diff").?, e, &err);
+    try std.testing.expectEqualStrings("50", argv2[5]);
+    try std.testing.expectEqual(@as(usize, 6), argv2.len); // verbose is not a CLI flag
+    const i = try json.parseFromSliceLeaky(json.Value, a, "{\"unit\":\"u\",\"test_command\":[\"npm\",\"test\"]}", .{});
+    const argv3 = try toolArgv(a, "za", findTool("zig_anything_integrate").?, i, &err);
+    try std.testing.expectEqualStrings("--", argv3[4]);
+    try std.testing.expectEqualStrings("test", argv3[6]);
+}
+
+test "compact output" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // Progress overwritten with \r keeps its last state; trailing blanks go.
+    try std.testing.expectEqualStrings("done 3/3\nok", try compact(a, "step 1/3\rstep 2/3\rdone 3/3\r\nok\n\n", 1000));
+    var long: std.ArrayList(u8) = .empty;
+    for (0..500) |n| try long.print(a, "line {d}\n", .{n});
+    const out = try compact(a, long.items, 600);
+    try std.testing.expect(out.len <= 700);
+    try std.testing.expect(std.mem.startsWith(u8, out, "line 0\n"));
+    try std.testing.expect(std.mem.endsWith(u8, out, "line 499"));
+    try std.testing.expect(std.mem.indexOf(u8, out, "lines left out") != null);
 }

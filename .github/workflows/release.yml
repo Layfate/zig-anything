@@ -10,14 +10,30 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      # Publishing to a registry happens only when its token is configured.
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.17.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Tag matches the version in build.zig and build.zig.zon
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          grep -q "const version = \"$v\";" build.zig || { echo "build.zig version is not $v"; exit 1; }
+          grep -q ".version = \"$v\"," build.zig.zon || { echo "build.zig.zon version is not $v"; exit 1; }
       - name: Build all targets
         run: zig build release
-      - name: Package
+      - name: Package archives
         run: |
           set -euo pipefail
           mkdir dist
@@ -32,8 +48,23 @@ jobs:
               tar -C stage -czf "dist/$name.tar.gz" "$name"
             fi
           done
+      - name: Build the npm package and wheels
+        run: |
+          python packaging/build.py --version "${GITHUB_REF_NAME#v}" --out dist-packages
+          (cd dist-packages/npm && npm pack --pack-destination ../../dist)
+          cp dist-packages/*.whl dist/
           (cd dist && sha256sum * > SHA256SUMS)
-      - name: Publish
+      - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file CHANGELOG.md
+      - name: Publish to npm
+        if: env.NPM_TOKEN != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: cd dist-packages/npm && npm publish --access public
+      - name: Publish to PyPI
+        if: env.PYPI_TOKEN != ''
+        run: |
+          python -m pip install twine
+          python -m twine upload --non-interactive -u __token__ -p "$PYPI_TOKEN" dist-packages/*.whl

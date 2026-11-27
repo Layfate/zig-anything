@@ -8,6 +8,7 @@
 //! Do not edit the copy inside a unit; `zig-anything init --force` rewrites it.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const json = std.json;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -145,8 +146,10 @@ pub fn encode(w: *Io.Writer, value: anytype) Io.Writer.Error!void {
             } else if (std.math.isInf(f)) {
                 try w.writeAll(if (f > 0) "{\"$num\":\"Infinity\"}" else "{\"$num\":\"-Infinity\"}");
             } else if (f == @trunc(f) and @abs(f) < 1e21) {
-                // Integral floats print without a fraction, matching JSON
-                // emitters in JavaScript and Python.
+                // Integral floats print without a fraction, and exactly:
+                // Python records big integers exactly. (JavaScript prints
+                // the shortest round-trip digits instead, so `diff` compares
+                // a JavaScript unit's integers as doubles.)
                 try w.print("{d}", .{@as(i128, @intFromFloat(f))});
             } else {
                 try w.print("{d}", .{f});
@@ -205,30 +208,70 @@ pub fn encode(w: *Io.Writer, value: anytype) Io.Writer.Error!void {
     }
 }
 
+/// What the harness passes to parameters that are not recorded arguments.
+pub const Inject = struct {
+    /// Given to `std.mem.Allocator` parameters: a per-call arena.
+    allocator: Allocator,
+    /// Given to `*std.Io.Writer` parameters: what the port prints, compared
+    /// with what the original printed when the recording has side effects.
+    writer: *Io.Writer,
+};
+
+fn isInjected(comptime P: type) bool {
+    return P == Allocator or P == *Io.Writer;
+}
+
 /// Number of parameters of `F` that are filled from recorded arguments
-/// (every parameter except a leading `std.mem.Allocator`).
+/// (every parameter except injected `std.mem.Allocator` and `*std.Io.Writer`).
 pub fn dataArity(comptime F: type) comptime_int {
     var n: comptime_int = 0;
     inline for (@typeInfo(F).@"fn".param_types) |P| {
-        if (P.? != Allocator) n += 1;
+        if (!isInjected(P.?)) n += 1;
     }
     return n;
+}
+
+fn isMutable(comptime P: type) bool {
+    return switch (@typeInfo(P)) {
+        .pointer => |p| !p.attrs.@"const" and P != *Io.Writer,
+        .optional => |o| isMutable(o.child),
+        else => false,
+    };
+}
+
+/// True when the port can change its arguments (a non-const slice or
+/// pointer parameter), so the harness reports them after the call.
+pub fn hasMutableParams(comptime F: type) bool {
+    inline for (@typeInfo(F).@"fn".param_types) |P| {
+        if (!isInjected(P.?) and isMutable(P.?)) return true;
+    }
+    return false;
 }
 
 fn Args(comptime f: anytype) type {
     return std.meta.ArgsTuple(@TypeOf(f));
 }
 
-/// Builds the argument tuple for `f`. Any `std.mem.Allocator` parameter
-/// receives `scratch`; every other parameter is decoded from `args`.
+/// Builds the argument tuple for `f`. Allocator parameters receive
+/// `scratch`, writer parameters discard their output, and every other
+/// parameter is decoded from `args`.
 pub fn buildArgs(comptime f: anytype, a: Allocator, scratch: Allocator, args: []const json.Value) (DecodeError || error{ArityMismatch})!Args(f) {
+    const discard = struct {
+        var w: Io.Writer.Discarding = .init(&.{});
+    };
+    return buildArgsWith(f, a, .{ .allocator = scratch, .writer = &discard.w.writer }, args);
+}
+
+pub fn buildArgsWith(comptime f: anytype, a: Allocator, inject: Inject, args: []const json.Value) (DecodeError || error{ArityMismatch})!Args(f) {
     const F = @TypeOf(f);
     if (args.len != comptime dataArity(F)) return error.ArityMismatch;
     var tuple: Args(f) = undefined;
     comptime var j: usize = 0;
     inline for (@typeInfo(F).@"fn".param_types, 0..) |P, i| {
         if (P.? == Allocator) {
-            tuple[i] = scratch;
+            tuple[i] = inject.allocator;
+        } else if (P.? == *Io.Writer) {
+            tuple[i] = inject.writer;
         } else {
             tuple[i] = try decode(P.?, a, args[j]);
             j += 1;
@@ -239,23 +282,44 @@ pub fn buildArgs(comptime f: anytype, a: Allocator, scratch: Allocator, args: []
 
 /// Calls `f` and writes one result line: `{"ok":<value>}` or `{"err":"Name"}`.
 pub fn callAndWrite(comptime f: anytype, w: *Io.Writer, tuple: Args(f)) Io.Writer.Error!void {
-    const R = @typeInfo(@TypeOf(f)).@"fn".return_type.?;
+    return callAndWriteEffects(f, w, tuple, null);
+}
+
+/// Like `callAndWrite`, and adds the port's side effects: `"mut"` (the
+/// arguments after the call) when the port can mutate them, and `"out"`
+/// when it printed through `printed` (the writer injected into the call).
+pub fn callAndWriteEffects(comptime f: anytype, w: *Io.Writer, tuple: Args(f), printed: ?*Io.Writer.Allocating) Io.Writer.Error!void {
+    const F = @TypeOf(f);
+    const R = @typeInfo(F).@"fn".return_type.?;
     const result = @call(.auto, f, tuple);
     if (@typeInfo(R) == .error_union) {
         if (result) |ok| {
             try w.writeAll("{\"ok\":");
             try encode(w, ok);
-            try w.writeAll("}\n");
         } else |err| {
             try w.writeAll("{\"err\":");
             try writeString(w, @errorName(err));
-            try w.writeAll("}\n");
         }
     } else {
         try w.writeAll("{\"ok\":");
         try encode(w, result);
-        try w.writeAll("}\n");
     }
+    if (comptime hasMutableParams(F)) {
+        try w.writeAll(",\"mut\":[");
+        comptime var first = true;
+        inline for (@typeInfo(F).@"fn".param_types, 0..) |P, i| {
+            if (comptime isInjected(P.?)) continue;
+            if (!first) try w.writeByte(',');
+            first = false;
+            try encode(w, tuple[i]);
+        }
+        try w.writeByte(']');
+    }
+    if (printed) |p| if (p.written().len > 0) {
+        try w.writeAll(",\"out\":");
+        try writeString(w, p.written());
+    };
+    try w.writeAll("}\n");
 }
 
 fn caseArgs(a: Allocator, line: []const u8) ![]const json.Value {
@@ -282,7 +346,7 @@ fn nextLine(rest: *[]const u8) ?[]const u8 {
 
 fn usage() noreturn {
     std.debug.print(
-        \\usage: harness run <cases.jsonl> <out.jsonl>
+        \\usage: harness run <cases.jsonl> <out.jsonl> [first [end]]
         \\       harness bench <cases.jsonl> <out.json> <iterations>
         \\
     , .{});
@@ -315,20 +379,30 @@ pub fn harnessMain(init: std.process.Init, comptime f: anytype) !void {
     defer scratch.deinit();
 
     if (std.mem.eql(u8, mode, "run")) {
+        // Optional [first, end) range of case lines, so the CLI can run
+        // shards in parallel and resume after a crash.
+        const first = if (argv.len > 4) std.fmt.parseInt(usize, argv[4], 10) catch usage() else 0;
+        const end = if (argv.len > 5) std.fmt.parseInt(usize, argv[5], 10) catch usage() else std.math.maxInt(usize);
+        var printed: Io.Writer.Allocating = .init(gpa);
+        defer printed.deinit();
         var rest: []const u8 = input;
-        while (nextLine(&rest)) |line| {
+        var index: usize = 0;
+        while (nextLine(&rest)) |line| : (index += 1) {
+            if (index < first) continue;
+            if (index >= end) break;
             defer _ = args_arena.reset(.retain_capacity);
             defer _ = scratch.reset(.retain_capacity);
+            printed.clearRetainingCapacity();
             const a = args_arena.allocator();
             const args = caseArgs(a, line) catch {
                 try w.writeAll("{\"harness_error\":\"unreadable case line\"}\n");
                 continue;
             };
-            const tuple = buildArgs(f, a, scratch.allocator(), args) catch |err| {
+            const tuple = buildArgsWith(f, a, .{ .allocator = scratch.allocator(), .writer = &printed.writer }, args) catch |err| {
                 try w.print("{{\"harness_error\":\"cannot decode arguments: {s}\"}}\n", .{@errorName(err)});
                 continue;
             };
-            try callAndWrite(f, w, tuple);
+            try callAndWriteEffects(f, w, tuple, &printed);
             // Flush per case so a crash still leaves every completed result.
             try w.flush();
         }
@@ -340,9 +414,10 @@ pub fn harnessMain(init: std.process.Init, comptime f: anytype) !void {
         var tuples: std.ArrayList(Args(f)) = .empty;
         defer tuples.deinit(gpa);
         var rest: []const u8 = input;
+        var discard: Io.Writer.Discarding = .init(&.{});
         while (nextLine(&rest)) |line| {
             const args = caseArgs(a, line) catch continue;
-            const tuple = buildArgs(f, a, scratch.allocator(), args) catch continue;
+            const tuple = buildArgsWith(f, a, .{ .allocator = scratch.allocator(), .writer = &discard.writer }, args) catch continue;
             try tuples.append(gpa, tuple);
         }
         // One untimed warm-up pass, mirroring the original-runtime harnesses.
@@ -362,6 +437,104 @@ pub fn harnessMain(init: std.process.Init, comptime f: anytype) !void {
         try w.print("{{\"cases\":{d},\"iterations\":{d},\"ns\":{d}}}\n", .{ tuples.items.len, iters, ns });
         try w.flush();
     } else usage();
+}
+
+// ---------------------------------------------------------------- bridge
+
+/// C ABI entry points used by `zig-anything bridge`: the port compiled to
+/// WebAssembly (loaded by Node) or a shared library (loaded by Python's
+/// ctypes). The caller passes a JSON array of arguments and receives one
+/// result object in the harness format: {"ok":...}, {"err":"Name"} or
+/// {"harness_error":"..."}. Buffers returned by `call` and `alloc` must be
+/// released with `free` using the same length.
+pub fn Bridge(comptime f: anytype) type {
+    return struct {
+        const gpa: Allocator = if (builtin.cpu.arch.isWasm()) std.heap.wasm_allocator else std.heap.smp_allocator;
+
+        pub fn alloc(n: usize) ?[*]u8 {
+            const s = gpa.alloc(u8, @max(n, 1)) catch return null;
+            return s.ptr;
+        }
+
+        pub fn free(p: [*]u8, n: usize) void {
+            gpa.free(p[0..@max(n, 1)]);
+        }
+
+        /// Runs one call: `args` is a JSON array of arguments. Returns one
+        /// result object. Returns null only when memory is exhausted.
+        pub fn call(args_ptr: [*]const u8, args_len: usize, out_len: *usize) ?[*]u8 {
+            const out = run(args_ptr[0..args_len], false) catch return null;
+            out_len.* = out.len;
+            return out.ptr;
+        }
+
+        /// Runs many calls in one crossing: `args` is a JSON array of
+        /// argument arrays. Returns one result object per line.
+        pub fn callBatch(args_ptr: [*]const u8, args_len: usize, out_len: *usize) ?[*]u8 {
+            const out = run(args_ptr[0..args_len], true) catch return null;
+            out_len.* = out.len;
+            return out.ptr;
+        }
+
+        // Per-thread arenas, kept between calls so a warm call allocates
+        // almost nothing: `out_arena` holds the parsed input and the
+        // response, `call_arena` one call's arguments and port allocations.
+        // Python's ctypes releases the GIL during calls, so calls can
+        // arrive on several threads at once.
+        threadlocal var out_state: std.heap.ArenaAllocator.State = .init;
+        threadlocal var call_state: std.heap.ArenaAllocator.State = .init;
+        /// Arenas keep up to this much memory between calls.
+        const keep_bytes = 1 << 20;
+
+        fn run(input: []const u8, batch: bool) error{OutOfMemory}![]u8 {
+            var out_arena = out_state.promote(gpa);
+            var call_arena = call_state.promote(gpa);
+            defer {
+                _ = out_arena.reset(.{ .retain_with_limit = keep_bytes });
+                _ = call_arena.reset(.{ .retain_with_limit = keep_bytes });
+                out_state = out_arena.state;
+                call_state = call_arena.state;
+            }
+            var aw: Io.Writer.Allocating = .init(out_arena.allocator());
+            const w = &aw.writer;
+            write: {
+                const root = json.parseFromSliceLeaky(json.Value, out_arena.allocator(), input, .{}) catch {
+                    w.writeAll("{\"harness_error\":\"arguments are not valid JSON\"}") catch return error.OutOfMemory;
+                    break :write;
+                };
+                if (root != .array) {
+                    w.writeAll("{\"harness_error\":\"arguments must be a JSON array\"}") catch return error.OutOfMemory;
+                    break :write;
+                }
+                if (!batch) {
+                    writeOne(w, call_arena.allocator(), root.array.items) catch return error.OutOfMemory;
+                    break :write;
+                }
+                for (root.array.items) |item| {
+                    defer _ = call_arena.reset(.retain_capacity);
+                    if (item != .array) {
+                        w.writeAll("{\"harness_error\":\"each batch item must be an argument array\"}\n") catch return error.OutOfMemory;
+                        continue;
+                    }
+                    writeOne(w, call_arena.allocator(), item.array.items) catch return error.OutOfMemory;
+                }
+            }
+            const text = std.mem.trimEnd(u8, aw.written(), "\n");
+            const out = try gpa.alloc(u8, @max(text.len, 1));
+            @memcpy(out[0..text.len], text);
+            return out[0..text.len];
+        }
+
+        fn writeOne(w: *Io.Writer, a: Allocator, args: []const json.Value) Io.Writer.Error!void {
+            var discard: Io.Writer.Discarding = .init(&.{});
+            const tuple = buildArgsWith(f, a, .{ .allocator = a, .writer = &discard.writer }, args) catch |err| {
+                return w.print("{{\"harness_error\":\"cannot decode arguments: {s}\"}}\n", .{@errorName(err)});
+            };
+            // A port with mutable slice parameters also reports them ("mut"),
+            // so the binding can copy the changes back into the caller's arrays.
+            try callAndWriteEffects(f, w, tuple, null);
+        }
+    };
 }
 
 // ---------------------------------------------------------------- tests
@@ -407,6 +580,9 @@ test "encode matches common JSON emitters" {
     const a = arena.allocator();
     try std.testing.expectEqualStrings("3", try encodeToString(a, @as(f64, 3.0)));
     try std.testing.expectEqualStrings("0.1", try encodeToString(a, @as(f64, 0.1)));
+    try std.testing.expectEqualStrings("0", try encodeToString(a, @as(f64, -0.0)));
+    // Large integral floats print exactly (Python records big ints exactly).
+    try std.testing.expectEqualStrings("63050394783186944", try encodeToString(a, @as(f64, 63050394783186944.0)));
     try std.testing.expectEqualStrings("{\"$num\":\"NaN\"}", try encodeToString(a, std.math.nan(f64)));
     try std.testing.expectEqualStrings("\"a\\\"b\\n\\u0001\"", try encodeToString(a, @as([]const u8, "a\"b\n\x01")));
     try std.testing.expectEqualStrings("[1,2]", try encodeToString(a, @as([]const i32, &.{ 1, 2 })));
@@ -450,4 +626,61 @@ test "callAndWrite emits ok and err lines" {
     try callAndWrite(mayFail, &aw.writer, .{-1});
     try callAndWrite(addOne, &aw.writer, .{41});
     try std.testing.expectEqualStrings("{\"ok\":2}\n{\"err\":\"Negative\"}\n{\"ok\":42}\n", aw.written());
+}
+
+fn sortInPlace(xs: []f64) void {
+    std.mem.sort(f64, xs, {}, std.sort.asc(f64));
+}
+
+fn greet(out: *Io.Writer, name: []const u8) !usize {
+    try out.print("hello {s}\n", .{name});
+    return name.len;
+}
+
+test "effects: mutated arguments and printed output are reported" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expect(hasMutableParams(@TypeOf(sortInPlace)));
+    try std.testing.expect(!hasMutableParams(@TypeOf(sample)));
+    try std.testing.expectEqual(@as(usize, 1), dataArity(@TypeOf(greet)));
+
+    var aw: Io.Writer.Allocating = .init(a);
+    var printed: Io.Writer.Allocating = .init(a);
+    const t1 = try buildArgsWith(sortInPlace, a, .{ .allocator = a, .writer = &printed.writer }, (try parse(a, "[[3,1,2]]")).array.items);
+    try callAndWriteEffects(sortInPlace, &aw.writer, t1, &printed);
+    const t2 = try buildArgsWith(greet, a, .{ .allocator = a, .writer = &printed.writer }, (try parse(a, "[\"zig\"]")).array.items);
+    try callAndWriteEffects(greet, &aw.writer, t2, &printed);
+    try std.testing.expectEqualStrings("{\"ok\":null,\"mut\":[[1,2,3]]}\n{\"ok\":3,\"out\":\"hello zig\\n\"}\n", aw.written());
+}
+
+test "bridge calls the port with JSON arguments" {
+    const B = Bridge(mayFail);
+    var n: usize = 0;
+    const args = "[16]";
+    const p = B.call(args.ptr, args.len, &n).?;
+    defer B.free(p, n);
+    try std.testing.expectEqualStrings("{\"ok\":4}", p[0..n]);
+    const bad = "[\"x\"]";
+    const q = B.call(bad.ptr, bad.len, &n).?;
+    defer B.free(q, n);
+    try std.testing.expect(std.mem.startsWith(u8, q[0..n], "{\"harness_error\""));
+    const neg = "[-1]";
+    const r = B.call(neg.ptr, neg.len, &n).?;
+    defer B.free(r, n);
+    try std.testing.expectEqualStrings("{\"err\":\"Negative\"}", r[0..n]);
+}
+
+test "bridge batch runs many calls in one crossing" {
+    const B = Bridge(mayFail);
+    var n: usize = 0;
+    const args = "[[16],[-1],[\"x\"],7]";
+    const p = B.callBatch(args.ptr, args.len, &n).?;
+    defer B.free(p, n);
+    var lines = std.mem.splitScalar(u8, p[0..n], '\n');
+    try std.testing.expectEqualStrings("{\"ok\":4}", lines.next().?);
+    try std.testing.expectEqualStrings("{\"err\":\"Negative\"}", lines.next().?);
+    try std.testing.expect(std.mem.startsWith(u8, lines.next().?, "{\"harness_error\""));
+    try std.testing.expect(std.mem.startsWith(u8, lines.next().?, "{\"harness_error\""));
+    try std.testing.expectEqual(@as(?[]const u8, null), lines.next());
 }
