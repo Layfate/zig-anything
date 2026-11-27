@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-27
+
 ### Added
 
 - **Native Node bridge.** `bridge` now also builds `port.node`, a Node-API addon that converts arguments directly to the port's types and back (no JSON). TypedArrays whose element type matches a numeric slice parameter are passed without copying. It needs no Node headers or build tools, and falls back to the WebAssembly build when it cannot load (`ZIG_ANYTHING_BRIDGE=wasm` forces WebAssembly; `--no-native` skips it). Both backends are verified against every recorded case. `index.mjs` also exports `backend`.
