@@ -53,7 +53,6 @@ jobs:
           python packaging/build.py --version "${GITHUB_REF_NAME#v}" --out dist-packages
           (cd dist-packages/npm && npm pack --pack-destination ../../dist)
           cp dist-packages/*.whl dist/
-          (cd dist && sha256sum * > SHA256SUMS)
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
